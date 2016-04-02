@@ -1,0 +1,4 @@
+camera_params  = /home/kivan/Projects/cv-stereo/config_files/camera_params_bb_lcd.txt
+source_folder  = /home/kivan/Projects/datasets/bumblebee/rectified_roi/
+output_folder  = /home/kivan/Projects/outputs/
+imglist        = /home/kivan/Projects/cv-stereo/config_files/bb_step3_lst.xml

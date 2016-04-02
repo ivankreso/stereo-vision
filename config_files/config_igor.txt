@@ -1,0 +1,7 @@
+dataset_name   = igor
+camera_params  = /home/kivan/datasets/Egomotion/igor/rectified/calib.txt
+left_folder    = /home/kivan/datasets/Egomotion/igor/rectified/left/
+right_folder   = /home/kivan/datasets/Egomotion/igor/rectified/right/
+start_num      = 1
+end_num        = 3521
+num_width      = 5

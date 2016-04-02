@@ -1,0 +1,305 @@
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <iostream>
+#include <fstream>
+
+#include <unistd.h>
+#include <sys/wait.h>
+
+#include <boost/program_options.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+namespace po = boost::program_options;
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+#include "../../../tracker/detector/feature_detector_harris_cv.h"
+#include "../../../tracker/mono/tracker_bfm.h"
+#include "../../../tracker/stereo/stereo_tracker.h"
+#include "../../../core/format_helper.h"
+#include "../../../core/math_helper.h"
+#include "../../../optimization/calibration_bias/deformation_field_solver.h"
+
+void ImportTracks(const std::string& image_list_path,
+                  const std::string& tracks_path,
+                  const std::string& groudtruth_path,
+                  optim::DeformationFieldSolver& solver)
+{
+  std::vector<std::string> imagelist;
+  bool ok = core::FormatHelper::readStringList(image_list_path, imagelist);
+  if (!ok || imagelist.empty())
+    throw "can not open " + image_list_path + " or the string list is empty\n";
+
+  int start_frame = 0 * 2;
+  int end_frame = imagelist.size();
+  
+  std::string track_name;
+  bool have_gt = false;
+  std::ifstream gt_file;
+  if (!groudtruth_path.empty()) {
+    have_gt = true;
+    gt_file.open(groudtruth_path);
+  }
+  else throw 1;
+
+  std::vector<cv::Mat> gt_motion, gt_motion_inv;
+  cv::Mat Rt_gt, Rt_gt_prev, Rt_gt_curr;
+  if (have_gt) {
+    // read all GT data
+    // skip first (identety) matrix
+    core::FormatHelper::ReadNextRtMatrix(gt_file, Rt_gt_prev);
+    core::MathHelper::invTrans(Rt_gt_prev, Rt_gt);
+    gt_motion_inv.push_back(Rt_gt_prev.clone());
+    gt_motion.push_back(Rt_gt.clone());
+    int num_motions = ((imagelist.size()/2) - 1);
+    for (int i = 0; i < num_motions; i++) {
+      core::FormatHelper::ReadNextRtMatrix(gt_file, Rt_gt_curr);
+      cv::Mat Rt_gt_inv = Rt_gt_prev * Rt_gt_curr;
+      gt_motion_inv.push_back(Rt_gt_inv);
+      core::MathHelper::invTrans(Rt_gt_inv, Rt_gt);
+      core::MathHelper::invTrans(Rt_gt_curr, Rt_gt_prev);
+      gt_motion.push_back(Rt_gt.clone());
+      //std::cout << Rt_gt << "\n\n";
+    }
+    Rt_gt.release();
+  }
+
+  track::FeatureDetectorHarrisCV feature_detector(0, 0, 0, 0, 0);
+  track::TrackerBFM mono_tracker(feature_detector, 0, 0, 0, 0);
+  track::StereoTracker stereo_tracker(mono_tracker, 0, 0, 0, 0);
+  int image_num;
+  int frame_num = 0;
+  std::cout << "Loading tracks: " << tracks_path << "\n";
+  for (unsigned i = start_frame + 2; i < end_frame; i += 2) {
+    image_num = i / 2;
+    frame_num++;
+    //std::cout << "Frame num: " << frame_num << "\n";
+    //std::cout << "Image num: " << image_num << " / " << end_frame/2-1 << "\n";
+    std::string tracker_file =  tracks_path + "/tracks_" + std::to_string(image_num);
+    //std::cout << tracker_file << "\n";
+
+    // diff check to test for estimation chrashes on KITTI test
+    double trans_diff;
+    core::MathHelper::GetMotionError(gt_motion[i/2 - 1], gt_motion[i/2], trans_diff);
+    //std::cout << "GT trans diff = " << trans_diff << "\n";
+    if (tracks_path.find("tsukuba") == std::string::npos) {
+      if (frame_num > 1 && trans_diff > 0.2) {
+        std::cout << gt_motion[i/2 - 1] << "\n\n" << gt_motion[i/2] << "\n";
+        std::cout << "[Error]: Big GT trans diff = " << trans_diff << "\n";
+        continue;
+        //throw 1;
+      }
+    }
+
+    //stereo_tracker->track(img_left, img_right);
+    std::ifstream input_file(tracker_file);
+    //boost::archive::text_iarchive iarchive(input_file);
+    boost::archive::binary_iarchive iarchive(input_file);
+    // write class instance to archive
+    iarchive >> stereo_tracker;
+    //std::cout << stereo_tracker.countActiveTracks() << " active tracks\n";
+    //solver.UpdateTracks(stereo_tracker, gt_motion[i/2]);
+    solver.UpdateReverseTracks(stereo_tracker, gt_motion_inv[i/2]);
+  }
+}
+
+
+void ImportTracksToSolver(const std::string config_file, const std::string tracks_path,
+                          optim::DeformationFieldSolver& solver)
+{
+  std::string imagelistfn;
+  std::string cam_params_file;
+  std::string source_folder;
+  std::string gt_filepath;
+
+  try {
+    po::variables_map vm;
+    po::options_description config("Config file options");
+    config.add_options()
+      ("camera_params,p", po::value<std::string>(&cam_params_file)->default_value("camera_params.txt"), "camera params file")
+      ("source_folder,s", po::value<std::string>(&source_folder), "folder with source")
+      ("imglist,l", po::value<std::string>(&imagelistfn), "file with image list")
+      ("groundtruth,g", po::value<std::string>(&gt_filepath), "file with motion GT");
+    std::ifstream ifs(config_file);
+    if (!ifs) {
+      throw "can not open config file: " + config_file + "\n";
+    }
+    else {
+      po::store(parse_config_file(ifs, config, true), vm);
+      notify(vm);
+    }
+  }
+  catch(std::exception& e) {
+    std::cout << e.what() << "\n";
+    throw 1;
+  }
+
+  std::cout << "Using track config = " << config_file << '\n';
+  ImportTracks(imagelistfn, tracks_path, gt_filepath, solver);
+}
+
+
+int main(int argc, char* argv[]) {
+  // Initialize Google's logging library.
+  // http://google-glog.googlecode.com/svn/trunk/doc/glog.html
+  google::InitGoogleLogging(argv[0]);
+
+  // 1226 / 370 = 3.3135
+  //int bin_rows = 3;
+  //int bin_cols = 9;
+  //int bin_rows = 5;
+  //int bin_cols = 15;
+  //int bin_rows = 7;
+  //int bin_cols = 23;
+  //int bin_rows = 11;
+  //int bin_cols = 37;
+  //int bin_rows = 15;
+  //int bin_cols = 49;
+  int bin_rows = 21;
+  int bin_cols = 69;
+
+  //double cam_params[5];
+  //core::FormatHelper::readCameraParams("/home/kivan/Projects/cv-stereo/config_files/camera_params_kitti_00.txt",
+  //                                     cam_params);
+  //cv::Mat img_left = cv::imread("/home/kivan/Projects/datasets/KITTI/sequences_gray/00/image_0/000000.png",
+  //                              CV_LOAD_IMAGE_GRAYSCALE);
+  //if (img_left.empty()) {
+  //  std::cout << "Error: no images!\n";
+  //  throw 1;
+  //}
+  //int img_rows = img_left.rows;
+  //int img_cols = img_left.cols;
+  //optim::DeformationFieldSolver solver(cam_params, bin_rows, bin_cols, img_rows, img_cols,
+  //                                     "00_deformation_field_matrix.yml");
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_00.txt",
+  //                     "/mnt/ssd/kivan/datasets/tracker_data/kitti_00/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_01.txt",
+  //                     "/mnt/ssd/kivan/datasets/tracker_data/kitti_01/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_02.txt",
+  //                     "/mnt/ssd/kivan/datasets/tracker_data/kitti_02/", solver);
+
+  //double cam_params[5];
+  //core::FormatHelper::readCameraParams("/home/kivan/Projects/cv-stereo/config_files/camera_params_kitti_04.txt",
+  //                                     cam_params);
+  //cv::Mat img_left = cv::imread("/home/kivan/Projects/datasets/KITTI/sequences_gray/04/image_0/000000.png",
+  //                              CV_LOAD_IMAGE_GRAYSCALE);
+  //if (img_left.empty()) {
+  //  std::cout << "Error: no images!\n";
+  //  throw 1;
+  //}
+  //int img_rows = img_left.rows;
+  //int img_cols = img_left.cols;
+  //optim::DeformationFieldSolver solver(cam_params, bin_rows, bin_cols, img_rows, img_cols,
+                                         //"04_deformation_field_matrix.yml");
+                                         //"without_04_deformation_field_matrix.yml");
+                                         //"without_05_deformation_field_matrix.yml");
+                                         //"without_06_deformation_field_matrix.yml");
+                                         //"without_07_deformation_field_matrix.yml");
+                                         //"without_08_deformation_field_matrix.yml");
+                                         //"without_09_deformation_field_matrix.yml");
+                                         //"without_10_deformation_field_matrix.yml");
+
+<<<<<<< HEAD
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_04.txt",
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/kitti_04/", solver);
+  //                     "/opt/kivan/datasets/tracker_data/freak/kitti_04/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_05.txt",
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/kitti_05/", solver);
+  //                     "/opt/kivan/datasets/tracker_data/freak/kitti_05/", solver);
+  ////ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_06.txt",
+  ////                     "/mnt/ssd/kivan/datasets/tracker_data/kitti_06/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_07.txt",
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/kitti_07/", solver);
+  //                     "/opt/kivan/datasets/tracker_data/freak/kitti_07/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_08.txt",
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/kitti_08/", solver);
+  //                     "/opt/kivan/datasets/tracker_data/freak/kitti_08/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_09.txt",
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/kitti_09/", solver);
+  //                     "/opt/kivan/datasets/tracker_data/freak/kitti_09/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_10.txt",
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/kitti_10/", solver);
+  //                     "/opt/kivan/datasets/tracker_data/freak/kitti_10/", solver);
+=======
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_04.txt",
+                       "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_04/", solver);
+                       //"/opt/kivan/datasets/tracker_data/freak/kitti_04/", solver);
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_05.txt",
+                       "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_05/", solver);
+                       //"/opt/kivan/datasets/tracker_data/freak/kitti_05/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_06.txt",
+  //                     "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_06/", solver);
+  //                     //"/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_06/", solver);
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_07.txt",
+                       "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_07/", solver);
+                       //"/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_07/", solver);
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_08.txt",
+                       "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_08/", solver);
+                       //"/opt/kivan/datasets/tracker_data/freak/kitti_08/", solver);
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_09.txt",
+                       "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_09/", solver);
+                       //"/opt/kivan/datasets/tracker_data/freak/kitti_09/", solver);
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_10.txt",
+                       "/mnt/ssd/kivan/datasets/tracker_data/ncc_tracker_data/kitti_10/", solver);
+                       //"/opt/kivan/datasets/tracker_data/freak/kitti_10/", solver);
+>>>>>>> 1e9ea90e84f37c6ab29de3a303e3df57b058f0a5
+
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_04.txt",
+  //                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_04/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_05.txt",
+  //                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_05/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_06.txt",
+  //                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_06/", solver);
+  ////ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_07.txt",
+  ////                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_07/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_08.txt",
+  //                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_08/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_09.txt",
+  //                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_09/", solver);
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_10.txt",
+  //                     "/mnt/ssd/kivan/datasets/freak_tracker_data/kitti_10/", solver);
+
+  //optim::DeformationFieldSolver solver(cam_params, bin_rows, bin_cols, img_rows, img_cols,
+  //                                     "06_deformation_field_matrix.yml");
+  //ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_kitti_06.txt",
+  //                     "/mnt/ssd/kivan/datasets/tracker_data/kitti_06/", solver);
+
+
+  //int bin_rows = 11;
+  //int bin_cols = 15;
+  int bin_rows = 3;
+  int bin_cols = 3;
+  //int bin_rows = 5;
+  //int bin_cols = 7;
+  double cam_params[5];
+  core::FormatHelper::readCameraParams(
+      "/home/kivan/Projects/cv-stereo/config_files/camera_params_tsukuba.txt",
+                                       cam_params);
+  cv::Mat img_left = cv::imread("/home/kivan/Projects/datasets/Tsukuba/NewTsukubaStereoDataset/illumination/fluorescent/left/tsukuba_fluorescent_L_00002.png",
+                                CV_LOAD_IMAGE_GRAYSCALE);
+  if (img_left.empty()) {
+    std::cout << "Error: no images!\n";
+    throw 1;
+  }
+  int img_rows = img_left.rows;
+  int img_cols = img_left.cols;
+  optim::DeformationFieldSolver solver(cam_params, bin_rows, bin_cols, img_rows, img_cols,
+                                       //"04_deformation_field_matrix.yml");
+                                       //"without_04_deformation_field_matrix.yml");
+                                       //"without_05_deformation_field_matrix.yml");
+                                       //"without_06_deformation_field_matrix.yml");
+                                       //"without_07_deformation_field_matrix.yml");
+                                       //"without_08_deformation_field_matrix.yml");
+                                       //"without_09_deformation_field_matrix.yml");
+                                       //"without_10_deformation_field_matrix.yml");
+                                       "tsukuba_deformation_field_matrix.yml");
+
+  ImportTracksToSolver("/home/kivan/Projects/cv-stereo/config_files/config_tsukuba_fluorescent.txt",
+                       "/opt/kivan/datasets/tracker_data/tsukuba/ncc/tsukuba_00/", solver);
+
+  solver.Solve();
+
+  return 0;
+}

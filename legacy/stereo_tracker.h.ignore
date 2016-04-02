@@ -1,0 +1,37 @@
+#ifndef _STEREO_TRACKER_
+#define _STEREO_TRACKER_
+
+#include <vector>
+#include <deque>
+
+#include "stereo_tracker_base.h"
+#include "../mono/tracker_base.h"
+#include "../../core/image.h"
+#include "../../core/types.h"
+
+namespace track {
+
+class StereoTracker : public StereoTrackerBase
+{
+public:
+   StereoTracker(TrackerBase* tracker_left, TrackerBase* tracker_right);
+   ~StereoTracker();
+   virtual void init(core::Image& img_left, core::Image& img_right);
+   virtual void track(core::Image& img_left, core::Image& img_right);
+   virtual int countFeatures() const;
+   virtual FeatureInfo featureLeft(int i) const;
+   virtual FeatureInfo featureRight(int i) const; 
+
+protected:
+   //virtual void matchEpipolar();
+   //virtual void checkEpipolar();
+
+   TrackerBase *tracker_left_, *tracker_right_;
+   std::vector<FeatureInfo> features_left_;
+   std::vector<FeatureInfo> features_right_;
+   std::vector<int> status_;
+};
+
+}
+
+#endif

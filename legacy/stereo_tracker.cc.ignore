@@ -1,0 +1,59 @@
+#include "stereo_tracker.h"
+
+namespace track {
+
+StereoTracker::StereoTracker(TrackerBase* tracker_left, TrackerBase* tracker_right)
+{
+   tracker_left_ = tracker_left;
+   tracker_right_ = tracker_right;
+}
+StereoTracker::~StereoTracker()
+{
+   delete tracker_left_;
+   delete tracker_right_;
+}
+
+void StereoTracker::init(core::Image& img_left, core::Image& img_right)
+{
+   tracker_left_->init(img_left);
+   tracker_right_->init(img_right);
+}
+
+
+void StereoTracker::track(core::Image& img_left, core::Image& img_right)
+{
+   tracker_left_->track(img_left);
+   tracker_right_->track(img_right);
+}
+
+
+int StereoTracker::countFeatures() const
+{
+   return 0;
+}
+
+FeatureInfo StereoTracker::featureLeft(int i) const
+{
+   return tracker_left_->feature(i);
+   //return features_left_.at(i);
+}
+
+FeatureInfo StereoTracker::featureRight(int i) const
+{
+   return tracker_right_->feature(i);
+   //return features_right_.at(i);
+}
+
+
+//void StereoTracker::matchEpipolar()
+//{
+//   // match left to right - search 1D only one side 
+//}
+
+//void StereoTracker::checkEpipolar()
+//{
+//   // check from left to right
+//   // maybe dont need this
+//}
+
+}

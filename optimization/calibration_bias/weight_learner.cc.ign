@@ -1,0 +1,81 @@
+#include "weight_learner.h"
+
+
+WeightLearner::WeightLearner()
+{
+
+}
+
+// Rt is the GT motion of world points with respect to camera
+void WeightLearner::update_tracks(const track::StereoTrackerBase& tracker, const cv::Mat& Rt)
+{
+  std::vector<core::Point> pts_left, pts_right;
+  std::vector<core::Point> pts_left_first, pts_right_first;
+  pts_left_first.resize(max_feats_);
+  pts_right_first.resize(max_feats_);
+  //std::vector<Eigen::Vector4d> points3d;
+  std::vector<cv::Mat> points3d;
+  std::vector<int> age(max_feats_, 0);
+  pts_left.resize(max_feats_);
+  pts_right.resize(max_feats_);
+
+  cam_extr_.push_back(Rt.clone());
+  //Eigen::Matrix4d cam_extr;
+  //cv2eigen(Rt, cam_extr);
+  //cam_extr_.push_back(cam_extr);
+  //Eigen::VectorXd cam_intr(cam_params);
+  //Eigen::Matrix<double,5,1> cam_intr(cam_params);
+  //assert(cam_intr.rows() == 5 && cam_intr.cols() == 1);
+  //cam_intr_.push_back(cam_intr);
+
+  //cv::Mat cam_intr(5, 1, CV_64F, cam_params);
+  //assert(cam_intr.rows == 5 && cam_intr.cols == 1);
+  //cam_intr_.push_back(cam_intr.clone());
+
+  assert(max_feats_ == tracker.countFeatures());
+
+  for(int i = 0; i < tracker.countFeatures(); i++) {
+    track::FeatureInfo feat_left = tracker.featureLeft(i);
+    track::FeatureInfo feat_right = tracker.featureRight(i);
+    age[i] = feat_left.age_;
+    cv::Mat pt3d = cv::Mat::zeros(4, 1, CV_64F);
+    if(age[i] > 0) {
+      pts_left[i] = feat_left.curr_;
+      pts_right[i] = feat_right.curr_;
+      // triangulate into 3D only the valid tracks previous points
+      core::MathHelper::triangulate(cam_intr_, feat_left.prev_, feat_right.prev_, pt3d);
+
+      // we need to save the previous point also
+      pts_left_first[i] = feat_left.prev_;
+      pts_right_first[i] = feat_right.prev_;
+    }
+    else {
+      pts_left_first[i] = core::Point(-1000, -1000);
+      pts_right_first[i] = core::Point(-1000, -1000);
+    }
+    points3d.push_back(pt3d.clone());
+  }
+
+  left_tracks_.push_back(pts_left);
+  right_tracks_.push_back(pts_right);
+  first_left_tracks_.push_back(pts_left_first);
+  first_right_tracks_.push_back(pts_right_first);
+  pts3d_.push_back(points3d);
+  tracks_age_.push_back(age);
+  //images_left_.push_back(img_left);
+  //images_right_.push_back(img_right);
+
+  // clear oldest frame data
+  if(frame_cnt_ >= sba_frames_) {
+    left_tracks_.pop_front();
+    right_tracks_.pop_front();
+    first_left_tracks_.pop_front();
+    first_right_tracks_.pop_front();
+    tracks_age_.pop_front();
+    pts3d_.pop_front();
+    cam_extr_.pop_front();
+    //images_left_.pop_front();
+    //images_right_.pop_front();
+  }
+}
+

@@ -1,0 +1,33 @@
+#ifndef __STEREO_TRACKER_REFINER__
+#define __STEREO_TRACKER_REFINER__
+
+#include "stereo_tracker_base.h"
+#include "../feature_refiner/feature_refiner_base.h"
+
+namespace track {
+
+class StereoTrackerRefiner : public StereoTrackerBase
+{
+public:
+   StereoTrackerRefiner(StereoTrackerBase* tracker, FeatureRefinerBase* refiner_left, 
+                        FeatureRefinerBase* refiner_right);
+   ~StereoTrackerRefiner();
+   virtual void init(core::Image& img_left, core::Image& img_right);
+   virtual void track(core::Image& img_left, core::Image& img_right);
+   virtual int countFeatures() const;
+   virtual FeatureInfo featureLeft(int i) const;
+   virtual FeatureInfo featureRight(int i) const; 
+
+private:
+   StereoTrackerBase* tracker_;
+   FeatureRefinerBase* refiner_left_;
+   FeatureRefinerBase* refiner_right_;
+   core::ImageSetExact imgset_left_;
+   core::ImageSetExact imgset_right_;
+   std::vector<core::Point> points_lp_, points_rp_, points_lc_, points_rc_;
+   std::vector<int> age_;
+};
+
+}
+
+#endif

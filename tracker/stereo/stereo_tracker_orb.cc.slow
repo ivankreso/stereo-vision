@@ -1,0 +1,293 @@
+#include "stereo_tracker_orb.h"
+
+namespace track {
+
+namespace {
+
+}
+
+void StereoTrackerORB::DrawKeypoints(const cv::Mat& img, const std::vector<cv::KeyPoint>& points,
+                                     std::string window_name) const {
+  cv::Mat disp_img;
+  cv::drawKeypoints(img, points, disp_img, cv::Scalar(0,0,255));
+  cv::imshow(window_name, disp_img);
+  //cv::waitKey(0);
+}
+
+void StereoTrackerORB::DrawFullTracks() const {
+  cv::Mat disp_lp, disp_rp, disp_lc, disp_rc;
+  int thickness = -1;
+  int radius = 3;
+  cv::Scalar color = cv::Scalar(0,0,255);
+  for (size_t i = 0; i < tracks_lp_.size(); i++) {
+    if (age_[i] < 1) continue;
+    cv::cvtColor(img_lp_, disp_lp, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(img_rp_, disp_rp, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(img_lc_, disp_lc, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(img_rc_, disp_rc, cv::COLOR_GRAY2BGR);
+    //cv::cvtColor(img_lp_, disp_img, cv::COLOR_GRAY2BGR);
+    //std::cout << age_[i] << "\n";
+    cv::circle(disp_lp, tracks_lp_[i].pt, radius, color, thickness);
+    cv::circle(disp_rp, tracks_rp_[i].pt, radius, color, thickness);
+    cv::circle(disp_lc, tracks_lc_[i].pt, radius, color, thickness);
+    cv::circle(disp_rc, tracks_rc_[i].pt, radius, color, thickness);
+    std::cout << "\nTrack ID = " << i << "\n";
+    std::cout << "LP = " << tracks_lp_[i].pt << "\n";
+    std::cout << "RP = " << tracks_rp_[i].pt << "\n";
+    std::cout << "LC = " << tracks_lc_[i].pt << "\n";
+    std::cout << "RC = " << tracks_rc_[i].pt << "\n";
+    cv::imshow("left_prev", disp_lp);
+    cv::imshow("right_prev", disp_rp);
+    cv::imshow("left_curr", disp_lc);
+    cv::imshow("right_curr", disp_rc);
+    cv::waitKey(0);
+  }
+}
+void StereoTrackerORB::DrawMatches() const {
+  cv::Mat disp_img;
+  cv::cvtColor(img_lp_, disp_img, cv::COLOR_GRAY2BGR);
+  for (size_t i = 0; i < tracks_lp_.size(); i++) {
+    if (age_[i] < 1) continue;
+    //cv::cvtColor(img_lp_, disp_img, cv::COLOR_GRAY2BGR);
+    //std::cout << age_[i] << "\n";
+    cv::arrowedLine(disp_img, tracks_lp_[i].pt, tracks_lc_[i].pt, cv::Scalar(0,255,0), 1, 8, 0, 0.1);
+  }
+  cv::imshow("tracks", disp_img);
+  cv::waitKey(0);
+}
+void StereoTrackerORB::DrawStereo() const {
+  cv::Mat disp_img;
+  cv::cvtColor(img_lc_, disp_img, cv::COLOR_GRAY2BGR);
+  for (size_t i = 0; i < tracks_lp_.size(); i++) {
+    if (age_[i] >= 0)
+      cv::arrowedLine(disp_img, tracks_lc_[i].pt, tracks_rc_[i].pt, cv::Scalar(0,255,0), 1, 8, 0, 0.1);
+  }
+  cv::imshow("stereo", disp_img);
+  cv::waitKey(0);
+}
+
+StereoTrackerORB::StereoTrackerORB(int max_tracks, int max_xdiff) : max_tracks_(max_tracks),
+      max_xdiff_(max_xdiff) {
+  max_ydiff_ = max_xdiff / 2;
+  max_epipolar_diff_ = 1.0;
+  max_disp_ = 160;
+  max_disp_diff_ = 40;
+  //int patch_size = 21;
+  int patch_size = 21;
+  //float scale_factor = 1.1;
+  float scale_factor = 1.1;
+  //int num_levels = 4;
+  int num_levels = 1;
+  maxdist_stereo_ = 50;
+  maxdist_temp_ = 50;
+  detector_ = cv::cuda::ORB::create(max_tracks_, scale_factor, num_levels, patch_size, 0, 2,
+                                    cv::cuda::ORB::HARRIS_SCORE, patch_size);
+  matcher_ = cv::cuda::DescriptorMatcher::createBFMatcher(cv::NORM_HAMMING);
+}
+
+void StereoTrackerORB::init(const cv::Mat& img_left, const cv::Mat& img_right) {
+  tracks_lp_.resize(max_tracks_);
+  tracks_rp_.resize(max_tracks_);
+  tracks_lc_.resize(max_tracks_);
+  tracks_rc_.resize(max_tracks_);
+  age_.assign(max_tracks_, -1);
+  index_map_.assign(max_tracks_, -1);
+
+  img_left.copyTo(img_lc_);
+  img_right.copyTo(img_rc_);
+  gpuimg_lc_.upload(img_lc_);
+  gpuimg_rc_.upload(img_rc_);
+
+  std::vector<cv::KeyPoint> points_right;
+  cv::cuda::GpuMat gpu_points_left, gpu_points_right;
+  detector_->detectAndComputeAsync(gpuimg_lc_, cv::cuda::GpuMat(), gpu_points_left,
+                                   descriptors_lc_, false, cuda_stream_);
+  detector_->detectAndComputeAsync(gpuimg_rc_, cv::cuda::GpuMat(), gpu_points_right,
+                                   descriptors_right_, false, cuda_stream_);
+  cuda_stream_.waitForCompletion();
+  detector_->convert(gpu_points_left, points_lc_);
+  detector_->convert(gpu_points_right, points_right);
+  std::vector<std::vector<cv::DMatch>> matches;
+  // TODO: faster if we split features in rows and then run maching for each row in async mode
+  matcher_->radiusMatch(descriptors_lc_, descriptors_right_, matches, maxdist_stereo_);
+  assert(points_lc_.size() == matches.size());
+  std::vector<cv::DMatch> final_matches;
+  // use epipolar constraint to filter the matches
+  ApplyEpipolarConstraint(points_lc_, points_right, matches, final_matches);
+  size_t i = 0;
+  for (auto& m : final_matches) {
+    if (m.queryIdx >= 0 && i < age_.size()) {
+      tracks_lc_[i] = points_lc_[m.queryIdx];
+      tracks_rc_[i] = points_right[m.trainIdx];
+      // we save the index of the left gpu array for later
+      index_map_[i] = m.queryIdx;
+      age_[i] = 0;
+      i++;
+    }
+  }
+  std::cout << "Stereo matching = " << i << "\n";
+  //DrawStereo();
+}
+
+void StereoTrackerORB::track(const cv::Mat& img_left, const cv::Mat& img_right) {
+  cv::swap(img_lp_, img_lc_);
+  cv::swap(img_rp_, img_rc_);
+  cv::swap(gpuimg_lp_, gpuimg_lc_);
+  cv::swap(gpuimg_rp_, gpuimg_rc_);
+  img_left.copyTo(img_lc_);
+  img_right.copyTo(img_rc_);
+  gpuimg_lc_.upload(img_lc_);
+  gpuimg_rc_.upload(img_rc_);
+
+  points_lp_.clear();
+  points_lp_ = std::move(points_lc_);
+  descriptors_lp_ = descriptors_lc_;
+  descriptors_lc_.release();
+  std::swap(tracks_lp_, tracks_lc_);
+  std::swap(tracks_rp_, tracks_rc_);
+
+  std::vector<cv::KeyPoint> points_right;
+  cv::cuda::GpuMat gpu_points_left, gpu_points_right;
+  detector_->detectAndComputeAsync(gpuimg_lc_, cv::cuda::GpuMat(), gpu_points_left,
+                                   descriptors_lc_, false, cuda_stream_);
+  detector_->detectAndComputeAsync(gpuimg_rc_, cv::cuda::GpuMat(), gpu_points_right,
+                                   descriptors_right_, false, cuda_stream_);
+  cuda_stream_.waitForCompletion();
+  detector_->convert(gpu_points_left, points_lc_);
+  detector_->convert(gpu_points_right, points_right);
+
+  //DrawKeypoints(img_lc_, points_lc_, "keypoints left");
+  //DrawKeypoints(img_rc_, points_right, "keypoints right");
+
+  // Perform stereo and teporal matching independently
+  cv::cuda::GpuMat gpu_temp_matches, gpu_stereo_matches;
+  matcher_->radiusMatchAsync(descriptors_lp_, descriptors_lc_, gpu_temp_matches,
+                             maxdist_temp_, cv::cuda::GpuMat(), cuda_stream_);
+  matcher_->radiusMatchAsync(descriptors_lc_, descriptors_right_, gpu_stereo_matches,
+                             maxdist_stereo_, cv::cuda::GpuMat(), cuda_stream_);
+  cuda_stream_.waitForCompletion();
+  // TODO clean unmatched stereo features - no use of them...
+  std::vector<std::vector<cv::DMatch>> stereo_matches1toN, temp_matches1toN;
+  matcher_->radiusMatchConvert(gpu_temp_matches, temp_matches1toN);
+  matcher_->radiusMatchConvert(gpu_stereo_matches, stereo_matches1toN);
+
+  std::vector<cv::DMatch> temp_matches, stereo_matches;
+  ApplyEpipolarConstraint(points_lc_, points_right, stereo_matches1toN, stereo_matches);
+  ApplyTemporalConstraint(points_lp_, points_lc_, temp_matches1toN, temp_matches);
+
+  std::vector<bool> used_matches(stereo_matches.size(), false);
+  // choose the best match which has disp_diff below threshold
+  for (size_t i = 0; i < index_map_.size(); i++) {
+    if (age_[i] >= 0) {
+      assert(index_map_[i] >= 0);
+      auto& m1 = temp_matches[index_map_[i]];
+      // if we have a temp match
+      if (m1.queryIdx >= 0) {
+        // and if we have a stereo match then we have a track!
+        auto& m2 = stereo_matches[m1.trainIdx];
+        if (m2.queryIdx >= 0) {
+          assert(m1.trainIdx == m2.queryIdx);
+          tracks_lc_[i] = points_lc_[m1.trainIdx];
+          tracks_rc_[i] = points_right[m2.trainIdx];
+          // we save the index of the left gpu array for later
+          index_map_[i] = m1.trainIdx;
+          age_[i]++;
+          // mark stereo match as used
+          used_matches[m1.trainIdx] = true;
+        }
+        // else it's dead
+        else
+          age_[i] = -1;
+      }
+      // else it's dead
+      else
+        age_[i] = -1;
+    }
+  }
+  size_t cnt = 0;
+  for (size_t i = 0; i < used_matches.size(); i++) {
+    if (cnt == age_.size()) break;
+    if (used_matches[i] == false) {
+      auto& m = stereo_matches[i];
+      if (m.queryIdx < 0) continue;
+      while (cnt < age_.size()) {
+        if (age_[cnt] < 0) {
+          tracks_lc_[cnt] = points_lc_[m.queryIdx];
+          tracks_rc_[cnt] = points_right[m.trainIdx];
+          index_map_[cnt] = m.queryIdx;
+          age_[cnt++] = 0;
+          break;
+        }
+        else
+          cnt++;
+      }
+    }
+  }
+
+  std::cout << "Matched tracks = " << countActiveTracks() << "\n";
+  //DrawMatches();
+  //DrawFullTracks();
+}
+
+int StereoTrackerORB::countActiveTracks() const {
+  int alive = 0;
+  for (int age : age_)
+    if (age > 0)
+      alive++;
+  return alive;
+}
+
+FeatureInfo StereoTrackerORB::featureLeft(int i) const {
+
+}
+
+FeatureInfo StereoTrackerORB::featureRight(int i) const {
+
+}
+
+void StereoTrackerORB::ApplyEpipolarConstraint(
+    const std::vector<cv::KeyPoint>& points_left,
+    const std::vector<cv::KeyPoint>& points_right,
+    const std::vector<std::vector<cv::DMatch>>& matches,
+    std::vector<cv::DMatch>& final_matches) const {
+  final_matches.resize(matches.size());
+  #pragma omp parallel for
+  for (size_t i = 0; i < matches.size(); i++) {
+    final_matches[i].queryIdx = -1;
+    final_matches[i].trainIdx = -1;
+    // the matches are ordered from best to worst - so choose the first which fits
+    for (auto& m : matches[i]) {
+      const cv::KeyPoint left = points_left[m.queryIdx];
+      const cv::KeyPoint right = points_right[m.trainIdx];
+      double disp = left.pt.x - right.pt.x;
+      if (std::abs(left.pt.y - right.pt.y) <= max_epipolar_diff_ && disp >= 0 && disp < max_disp_) {
+        final_matches[i] = m;
+        break;
+      }
+    }
+  }
+}
+
+void StereoTrackerORB::ApplyTemporalConstraint(
+    const std::vector<cv::KeyPoint>& points_prev,
+    const std::vector<cv::KeyPoint>& points_curr,
+    const std::vector<std::vector<cv::DMatch>>& matches,
+    std::vector<cv::DMatch>& final_matches) const {
+  final_matches.resize(matches.size());
+  #pragma omp parallel for
+  for (size_t i = 0; i < matches.size(); i++) {
+    final_matches[i].queryIdx = -1;
+    final_matches[i].trainIdx = -1;
+    for (auto& m : matches[i]) {
+      const cv::KeyPoint prev = points_prev[m.queryIdx];
+      const cv::KeyPoint curr = points_curr[m.trainIdx];
+      if (std::abs(prev.pt.y - curr.pt.y) < max_ydiff_ &&
+          std::abs(prev.pt.x - curr.pt.x) < max_xdiff_) {
+        final_matches[i] = m;
+        break;
+      }
+    }
+  }
+}
+
+}   // namespace track

@@ -1,0 +1,176 @@
+#include "bundle_adjustment_solver.h"
+
+#include "../../core/math_helper.h"
+
+namespace optim
+{
+
+BundleAdjustmentSolver::BundleAdjustmentSolver()
+{
+}
+
+void BundleAdjustmentSolver::SetCameraIntrinsics(const cv::Mat& cam_intrinsics)
+{
+  cam_intrinsics.copyTo(cam_intr_);
+}
+
+void BundleAdjustmentSolver::AddCameraMotion(const cv::Mat& Rt)
+{
+  std::array<double,3> trans;
+  trans[0] = Rt.at<double>(0,3);
+  trans[1] = Rt.at<double>(1,3);
+  trans[2] = Rt.at<double>(2,3);
+
+  Eigen::Matrix3d mrot;
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++)
+      mrot(i,j) = Rt.at<double>(i,j);
+
+  std::array<double,3> euler_angles;
+  ceres::RotationMatrixToAngleAxis((const double*)mrot.data(), &euler_angles[0]);
+
+  cam_translation_.push_back(trans);
+  cam_rotation_.push_back(euler_angles);
+}
+
+void BundleAdjustmentSolver::AddTrackData(const TrackData& data)
+{
+  const int num_motions = cam_translation_.size();
+  //const int max_frames = cam_translation_.size();
+  int end_frame = (num_motions - data.dist_from_cframe);
+  int num_obs = data.left_tracks.size();
+  int start_frame = std::max(0, (end_frame+1) - num_obs);
+  int num_used_obs = end_frame - start_frame + 1;
+  int start_obs = num_obs - num_used_obs;
+  //std::cout << data.dist_from_cframe << "\n";
+  //std::cout << num_used_obs << "\n\n";
+
+  //int num_frames = end_frame - start_frame;
+
+  //trans_params_ = new double[3 * num_motions];
+  //rot_params_ = new double[3 * num_motions];
+  //for (size_t i = 0; i < cam_translation_.size(); i++) {
+  //  for (size_t j = 0; j < 3; j++) {
+  //    trans_params_[i*3 + j] = cam_translation_[i][j];
+  //    rot_params_[i*3 + j] = cam_rotation_[i][j];
+  //  }
+  //}
+  
+  cv::Mat pt3d = cv::Mat::zeros(4, 1, CV_64F);
+  core::MathHelper::triangulate(cam_intr_, data.left_tracks[start_obs], data.right_tracks[start_obs], pt3d);
+  for (int i = 1; i < num_used_obs; i++) {
+    //ReprojectionErrorStereoMotion* reproj_error = new ReprojectionErrorStereoMotion(
+    //    pt3d, data.left_tracks[i], data.right_tracks[i], cam_intr_, i, 1.0);
+    //ReprojectionErrorStereoAllMotion* reproj_error2 = new ReprojectionErrorStereoAllMotion(
+    //    pt3d, data.left_tracks[i], data.right_tracks[i], cam_intr_, start_frame, start_frame + i, 1.0);
+    //ceres::CostFunction* cost;
+
+    switch (i) {
+      case 1: {
+        ReprojectionErrorStereoMotionOne* reproj_error = new ReprojectionErrorStereoMotionOne(
+            pt3d, data.left_tracks[start_obs + i], data.right_tracks[start_obs + i], cam_intr_, 1.0);
+        ceres::CostFunction* cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotionOne,4,3,3>(reproj_error);
+        //ceres_problem_.AddResidualBlock(cost, NULL, &trans_params_[start_frame*3], &rot_params_[start_frame*3]);
+        ceres_problem_.AddResidualBlock(cost, NULL, &cam_translation_[start_frame][0],
+                                        &cam_rotation_[start_frame][0]);
+        break;
+      }
+      case 2: {
+        ReprojectionErrorStereoMotionOne* reproj_error = new ReprojectionErrorStereoMotionOne(
+            pt3d, data.left_tracks[start_obs + i], data.right_tracks[start_obs + i], cam_intr_, 1.0);
+        ceres::CostFunction* cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotionOne,4,3,3,3,3>(reproj_error);
+        //ceres_problem_.AddResidualBlock(cost, NULL, &trans_params_[start_frame*3], &rot_params_[start_frame*3],
+        //                                &trans_params_[(start_frame+1) * 3], &rot_params_[(start_frame+1) * 3]);
+        ceres_problem_.AddResidualBlock(cost, NULL,
+                                        &cam_translation_[start_frame][0], &cam_rotation_[start_frame][0],
+                                        &cam_translation_[start_frame+1][0], &cam_rotation_[start_frame+1][0]);
+        break;
+      }
+      //case 3: {
+      //  cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,9,9>(reproj_error);
+      //  break;
+      //}
+      //case 4: {
+      //  cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,12,12>(reproj_error);
+      //  break;
+      //}
+      //case 5: {
+      //  cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,15,15>(reproj_error);
+      //  break;
+      //}
+      default: {
+        assert(false);
+      }
+    }
+    ////switch (i) {
+    //switch (num_motions) {
+    //  case 1: {
+    //    cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,3,3>(reproj_error);
+    //    break;
+    //  }
+    //  case 2: {
+    //            std::cout << "LALA\n";
+    //    cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoAllMotion,4,6,6>(reproj_error2);
+    //    //cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,6,6>(reproj_error);
+    //    break;
+    //  }
+    //  case 3: {
+    //    cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,9,9>(reproj_error);
+    //    break;
+    //  }
+    //  case 4: {
+    //    cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,12,12>(reproj_error);
+    //    break;
+    //  }
+    //  case 5: {
+    //    cost = new ceres::AutoDiffCostFunction<ReprojectionErrorStereoMotion,4,15,15>(reproj_error);
+    //    break;
+    //  }
+    //  default: {
+    //    assert(false);
+    //  }
+    //}
+    //// NULL is squared loss
+    ////ceres_problem_.AddResidualBlock(cost, NULL, &trans_params_[start_frame*3], &rot_params_[start_frame*3]);
+    //ceres_problem_.AddResidualBlock(cost, NULL, trans_params_, rot_params_);
+  }
+}
+
+void BundleAdjustmentSolver::Solve()
+{
+  ceres::Solver::Options options;
+  // For bundle adjustment problems with up to a hundred or so cameras, use DENSE_SCHUR.
+  // For larger bundle adjustment problems with sparse Schur Complement/Reduced camera matrices
+  // use SPARSE_SCHUR. This requires that you have SuiteSparse or CXSparse installed.
+  options.linear_solver_type = ceres::DENSE_SCHUR;
+  //options.linear_solver_type = ceres::SPARSE_SCHUR;
+  //options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+  options.num_threads = 4;
+  //options.num_threads = omp_get_num_threads();
+  options.minimizer_progress_to_stdout = true;
+  //options.logging_type = ceres::SILENT;
+
+  ceres::Solver::Summary summary;
+  ceres::Solve(options, &ceres_problem_, &summary);
+  std::cout << summary.FullReport() << "\n";
+}
+
+// get camera extrinsic transform from cam local coord to world coord (1-frame coord)
+cv::Mat BundleAdjustmentSolver::GetCameraParams(int ci) const
+{
+  Eigen::Matrix3d rmat;
+  //ceres::AngleAxisToRotationMatrix(&cam_extr_rot_[ci][0], (const double *)rmat.data());
+  ceres::AngleAxisToRotationMatrix((const double*) &cam_rotation_[ci][0], rmat.data());
+  //std::cout << rmat << "\n";
+
+  cv::Mat cvmat = cv::Mat::eye(4,4,CV_64F);
+  for(int i = 0; i < rmat.rows(); i++)
+    for(int j = 0; j < rmat.cols(); j++)
+      cvmat.at<double>(i,j) = rmat(i,j);
+  for(int i = 0; i < 3; i++)
+    cvmat.at<double>(i,3) = cam_translation_[ci][i];
+
+  return cvmat;
+}
+
+} // end namespace optim

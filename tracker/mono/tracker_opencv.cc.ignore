@@ -1,0 +1,277 @@
+#include "tracker_opencv.h"
+
+using namespace std;
+using namespace cv;
+
+namespace track {
+
+// param options
+namespace {
+   static char const* configDocs[]={"replaceLost", "winSize", "maxPyrLevel", "numFeats",
+      "qualityLvl", "minDistance", "blockSize", "useHarris", "harrisK"};
+   static ConfigParserKeys configDocsVec(&configDocs[0], 
+         &configDocs[0]+sizeof(configDocs)/sizeof(configDocs[0]) );
+   static char const* configDocsWinSize[]={"w", "h"};
+   static ConfigParserKeys configDocsWinSizeVec(&configDocsWinSize[0], 
+         &configDocsWinSize[0]+sizeof(configDocsWinSize)/sizeof(configDocsWinSize[0]));
+
+}
+
+TrackerOpencv::TrackerOpencv()
+{
+   // default params
+   config("replaceLost=1 winSize=[w=21 h=21] maxPyrLevel=3 numFeats=400 qualityLvl=0.15 "
+         "minDistance=4 blockSize=3 useHarris=1 harrisK=0.04");
+}
+
+TrackerOpencv::~TrackerOpencv()
+{
+}
+
+// reconfigure algorithm with new params
+void TrackerOpencv::config(std::string confStr)
+{
+   // parse first level params
+   auto confMap=configParser(confStr, configDocsVec);
+   //   bool doReset = stoi(confMap["numFeats"]) != numFeats() ||
+   //		  !isEqual(stod(confMap["qualityLvl"]), qualityLvl()) ||
+   //		  stoi(confMap["minDistance"]) != minDistance() ||
+   //		  stoi(confMap["blockSize"]) != blockSize() ||
+   //		  (bool)stoi(confMap["useHarris"]) != useHarris() ||
+   //		  !isEqual(stod(confMap["harrisK"]), harrisK());
+   configParserMerge(confMap, configDocsVec, config_);
+
+   // parse second level params
+   auto it = confMap.find("winSize");
+   if (it != confMap.end()) {
+      auto confMapWinSize = configParser(it->second, configDocsWinSizeVec);
+      configParserMerge(confMapWinSize, configDocsWinSizeVec, configWinSize_);
+   }
+   //   if(doReset) {
+   //      detector_ = GoodFeaturesToTrackDetector(numFeats(), qualityLvl(), minDistance(),
+   //					      blockSize(), useHarris(), harrisK());
+   //   }
+}
+
+
+string TrackerOpencv::getConfig()
+{
+   config_["winSize"] = std::string("[") + configParserReport(configWinSize_,
+         configDocsWinSizeVec) + std::string("]");
+   return configParserReport(config_, configDocsVec);
+}
+
+
+string TrackerOpencv::getConfigDocs()
+{
+   string rv(configParserJoin(configDocsVec));
+   rv += "; winSize=[";
+   rv += configParserJoin(configDocsWinSizeVec);
+   rv += "]";
+   return rv;
+}
+
+// init function sets first frame image and its featuers
+int TrackerOpencv::init(const core::Image& img)
+{
+   HelperOpencv::ImageToMat(img, prevMat_);
+   //Mat(Size(img.rows_, img.cols_), CV_8U, img.data_);
+
+   vector<cv::Point2f> cvPoints;
+   //detector.detect(img_left_prev, features_left, border_mask);
+   //   goodFeaturesToTrack(InputArray image, OutputArray corners, int maxCorners, double qualityLevel,
+   //   double minDistance, InputArray mask=noArray(), int blockSize=3, bool useHarrisDetector=false, 
+   //   double k=0.04 );
+   goodFeaturesToTrack(prevMat_, cvPoints, numFeats(), qualityLvl(), minDistance(), noArray(),
+         blockSize(), useHarris(), harrisK());
+   //   cornerSubPix(prevMat_, cvPoints, Size(13, 13), Size(-1, -1), 
+   //	        TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 20, 0.03));
+
+   cvPointsToFeatureInfo(cvPoints, feats_);
+
+   HelperOpencv::MatToImage(prevMat_, prevImg_);
+   return 1;
+}
+
+// tracks previous features in new image
+int TrackerOpencv::track(const core::Image& img)
+{
+   //   calcOpticalFlowPyrLK( imgA, imgB, cornersA, cornersB, features_found, feature_errors,
+   //   Size(15, 15), 5, cvTermCriteria( CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 20, 0.3 ), 0 );
+   Mat cvimgPrev; // = Mat(Size(prevImg_.rows_, prevImg_.cols_), CV_8U, prevImg_.data_);
+   Mat cvimgNext; // = Mat(Size(img.rows_, img.cols_), CV_8U, img.data_);
+   HelperOpencv::ImageToMat(prevImg_, cvimgPrev);
+   HelperOpencv::ImageToMat(img, cvimgNext);
+   int nfeats = 0;
+
+   vector<cv::Point2f> pointsPrev;
+   vector<cv::Point2f> pointsNext;
+   vector<uchar> status;
+   vector<float> error;
+
+   // if it is defined, replace lost features with new ones
+   if(replaceLost())
+      replaceLostFeatures(cvimgNext);
+
+   for(size_t i = 0; i < feats_.size(); i++)
+      feats_.at(i).prev_ = feats_.at(i).curr_;
+
+   // TODO add index map here: track_index = addPointsToTrack(pointsPrev);
+   addPointsToTrack(pointsPrev);
+
+   calcOpticalFlowPyrLK(cvimgPrev, cvimgNext, pointsPrev, pointsNext, status, error,
+         cv::Size(winSizeWidth(), winSizeHeight()), maxPyrLevel());
+
+   // update only those features that we tracked
+   int cntPts = 0;
+   for(size_t i = 0; i < feats_.size(); i++) {
+      if(feats_[i].status_ == 1) {
+         assert(cntPts < pointsNext.size());
+         feats_[i].curr_.x_ = pointsNext[cntPts].x;
+         feats_[i].curr_.y_ = pointsNext[cntPts].y;
+         if(status[cntPts] == 0) {
+            feats_[i].status_ = 0;
+            feats_[i].age_ = -1;
+         }
+         else
+            feats_[i].age_++;
+         cntPts++;
+      }
+   }
+
+
+   //prevImg_.dealloc();
+   prevImg_ = move(img);
+   return nfeats;
+}
+
+int TrackerOpencv::countTracked()
+{
+   int tracked = 0;
+   for(FeatureInfo& feat : feats_) {
+      if(feat.status_ == 1)
+         tracked++;
+   }
+   return tracked;
+}
+
+int TrackerOpencv::countFeatures()
+{
+   return feats_.size();
+}
+
+FeatureInfo TrackerOpencv::feature(int i)
+{
+   return feats_.at(i);
+}
+
+
+void TrackerOpencv::addPointsToTrack(vector<cv::Point2f>& points)
+{
+   points.clear();
+   cv::Point2f pt;
+   for(size_t i = 0; i < feats_.size(); i++) {
+      if(feats_[i].status_ == 1) {
+         pt.x = feats_[i].curr_.x_;
+         pt.y = feats_[i].curr_.y_;
+         points.push_back(pt);
+      }
+   }
+}
+
+void TrackerOpencv::cvPointsToFeatureInfo(vector<cv::Point2f>& points, vector<FeatureInfo>& feats)
+{
+   feats.clear();
+   FeatureInfo feature;
+   for(size_t i = 0; i < points.size(); i++) {
+      feature.prev_.x_ = points[i].x;
+      feature.prev_.y_ = points[i].y;
+      feature.curr_.x_ = points[i].x;
+      feature.curr_.y_ = points[i].y;
+      feature.age_ = 0;
+      feature.status_ = 1;
+      feats.push_back(feature);
+   }
+}
+
+void TrackerOpencv::replaceLostFeatures(Mat& img)
+{
+   // detect new points in current image
+   vector<cv::Point2f> cvPoints;
+   goodFeaturesToTrack(img, cvPoints, numFeats(), qualityLvl(), minDistance(), noArray(),
+         blockSize(), useHarris(), harrisK());
+   //cornerSubPix(img, cvPoints, cv::Size(13, 13), cv::Size(-1, -1), 
+   //      TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 20, 0.03));
+   size_t cntPts = 0;
+   // add new points instead untracked current ones
+   for(size_t i = 0; i < feats_.size(); i++) {
+      if(feats_.at(i).status_ == 0) {
+         feats_.at(i).curr_.x_ = cvPoints.at(cntPts).x;
+         feats_.at(i).curr_.y_ = cvPoints.at(cntPts).y;
+         feats_.at(i).age_ = 0;
+         feats_.at(i).status_ = 1;
+         cntPts++;
+         if(cntPts == cvPoints.size())
+            break;
+      }
+   }
+}
+
+bool TrackerOpencv::isEqual(double a, double b)
+{
+   return fabs(a - b) < 0.000001;
+}
+
+
+bool TrackerOpencv::replaceLost()
+{
+   return stoi(config_["replaceLost"]);
+}
+
+int TrackerOpencv::winSizeWidth()
+{
+   return stoi(configWinSize_["w"]);
+}
+
+int TrackerOpencv::winSizeHeight()
+{
+   return stoi(configWinSize_["h"]);
+}
+
+int TrackerOpencv::maxPyrLevel()
+{
+   return stoi(config_["maxPyrLevel"]);
+}
+
+int TrackerOpencv::numFeats()
+{
+   return stoi(config_["numFeats"]);
+}
+
+double TrackerOpencv::qualityLvl()
+{
+   return stod(config_["qualityLvl"]);
+}
+
+int TrackerOpencv::minDistance()
+{
+   return stoi(config_["minDistance"]);
+}
+
+int TrackerOpencv::blockSize()
+{
+   return stoi(config_["blockSize"]);
+}
+
+bool TrackerOpencv::useHarris()
+{
+   return stoi(config_["useHarris"]);
+}
+
+double TrackerOpencv::harrisK()
+{
+   return stod(config_["harrisK"]);
+}
+
+}
+

@@ -1,0 +1,33 @@
+# run example: (in build dir)
+# in Debug/ folder:
+# cmake src_dir -DCMAKE_BUILD_TYPE=debug
+# in Release/ folder:
+# cmake src_dir -DCMAKE_BUILD_TYPE=release
+
+cmake_minimum_required(VERSION 2.8)
+
+<<<<<<< HEAD
+#set(CMAKE_CXX_FLAGS "-std=c++11 -march=native")
+#find_package(OpenCV REQUIRED)
+#find_package(OpenCV COMPONENTS opencv_core REQUIRED)
+=======
+>>>>>>> 1c5cc043736891857c9ab203b6e15869e904fa15
+
+include_directories(/usr/include/eigen3/)
+
+file(GLOB SRC_LIST . *.cc)
+
+#message(STATUS "${SRC_LIST}")
+#message(STATUS "${OpenCV_LIBS}")
+#message(STATUS "${Boost_LIBRARIES}")
+
+if(NOT TARGET core)
+  add_subdirectory(../../core libs/core)
+endif()
+
+add_library(tracker_base ${SRC_LIST})
+<<<<<<< HEAD
+#target_link_libraries(tracker_base core ${OpenCV_LIBS})
+=======
+>>>>>>> 1c5cc043736891857c9ab203b6e15869e904fa15
+target_link_libraries(tracker_base core)

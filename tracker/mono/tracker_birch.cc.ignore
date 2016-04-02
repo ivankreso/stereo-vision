@@ -1,0 +1,234 @@
+#include "tracker_birch.h"
+
+#include <sstream>
+#include <cstdlib>
+
+#include <assert.h>
+
+
+namespace track {
+
+using namespace core;
+
+namespace{
+  static char const* configDocs[]={
+    "warpMode", "thWarp", "replaceLost", "pyramid", "szWinWarp", "szWinTrans", "nFeats"};
+  static ConfigParserKeys configDocsVec(&configDocs[0], 
+        &configDocs[0]+sizeof(configDocs)/sizeof(configDocs[0]) );
+  static char const* configDocsPyr[]={
+    "size", "subsampling", "fsigma"};
+  static ConfigParserKeys configDocsPyrVec(&configDocsPyr[0], 
+        &configDocsPyr[0]+sizeof(configDocsPyr)/sizeof(configDocsPyr[0]) );
+}
+
+
+TrackerBirch::TrackerBirch():
+  kltTC_(0), kltFL_(0)
+{
+  config("warpMode=7 thWarp=5 replaceLost=1 "
+         "pyramid=[size=3 subsampling=2 fsigma=0.1] "
+         "szWinTrans=9 szWinWarp=15 nFeats=500");
+  //config("warpMode=7 thWarp=10 replaceLost=0 "
+  //       "pyramid=[size=3 subsampling=2 fsigma=0.1] "
+  //       "szWinTrans=9 szWinWarp=15 nFeats=100");
+  //config("warpMode=5 thWarp=20 pyramid=[3 fsigma=1.2] replaceLost=0");
+}
+TrackerBirch::~TrackerBirch(){
+  if (kltFL_) 
+    KLTFreeFeatureList(kltFL_);
+  if (kltTC_) 
+    KLTFreeTrackingContext(kltTC_);
+}
+
+
+
+std::string TrackerBirch::getConfigDocs() {
+  std::string rv(configParserJoin(configDocsVec));
+  rv += "; pyramid=[";
+  rv += configParserJoin(configDocsPyrVec);
+  rv += "]";
+  return rv;
+}
+
+std::string TrackerBirch::getConfig(){
+  config_["pyramid"]=std::string("[")+configParserReport(configPyr_, configDocsPyrVec)+std::string("]");
+  return configParserReport(config_, configDocsVec);
+}
+
+int TrackerBirch::warpMode(){
+  return std::atoi(config_["warpMode"].c_str());
+}
+double TrackerBirch::thWarp(){
+  return std::atof(config_["thWarp"].c_str());
+}
+int TrackerBirch::replaceLost(){
+  return std::atoi(config_["replaceLost"].c_str());
+}
+int TrackerBirch::szWinTrans(){
+  return std::atoi(config_["szWinTrans"].c_str());
+}
+int TrackerBirch::szWinWarp(){
+  return std::atoi(config_["szWinWarp"].c_str());
+}
+int TrackerBirch::pyrSize(){
+  return std::atoi(configPyr_["size"].c_str());
+}
+int TrackerBirch::pyrSubsampling(){
+  return std::atoi(configPyr_["subsampling"].c_str());
+}
+double TrackerBirch::pyrFactorSigma(){
+  return std::atof(configPyr_["fsigma"].c_str());
+}
+
+
+void TrackerBirch::config(std::string confStr) {
+  auto confMap=configParser(confStr, configDocsVec);
+
+  bool doReset=
+    std::atoi(confMap["szWinWarp"].c_str()) !=szWinWarp() ||
+    std::atoi(confMap["szWinTrans"].c_str())!=szWinTrans() ||
+    std::atoi(confMap["nFeats"].c_str())    !=countFeatures();
+  configParserMerge(confMap, configDocsVec, config_);
+
+  bool doResetPyr=false;
+  auto it = confMap.find("pyramid");
+  if (it != confMap.end()) {
+    auto confMapPyr=configParser(it->second, configDocsPyrVec);
+    doResetPyr=
+      std::atoi(confMapPyr["size"].c_str())       !=pyrSize() ||
+      std::atoi(confMapPyr["subsampling"].c_str())!=pyrSubsampling() ||
+      std::atoi(confMapPyr["fsigma"].c_str())     !=pyrFactorSigma();
+    configParserMerge(confMapPyr, configDocsPyrVec, configPyr_);
+  }
+
+  if (doReset){
+    if (kltTC_) 
+      KLTFreeTrackingContext(kltTC_);
+    kltTC_=KLTCreateTrackingContext(szWinTrans(), szWinTrans(), szWinWarp(), szWinWarp());
+    kltTC_->sequentialMode = TRUE;
+
+    size_t sz_new=std::atoi(config_["nFeats"].c_str());
+    if (kltFL_) {
+      for (size_t i=0; i<feats_.size(); ++i){
+        KLTFreeFeature(kltFL_->feature[i]);
+        KLTInitFeature(kltFL_->feature[i]);
+      }
+      if (feats_.size() < sz_new){
+        kltFL_ = KLTResizeFeatureList(kltFL_, sz_new);
+      } 
+    } else {
+      kltFL_ = KLTCreateFeatureList(sz_new);
+    }
+    feats_.resize(sz_new);
+  }
+
+  if (doResetPyr){
+    kltTC_->nPyramidLevels = pyrSize();
+    kltTC_->subsampling = pyrSubsampling();
+    kltTC_->smooth_sigma_fact = (float) pyrFactorSigma();
+    KLTUpdateTCBorder(kltTC_);
+  }
+
+  kltTC_->affineConsistencyCheck = std::min(std::max(-1,warpMode()), 7);
+  kltTC_->affine_max_residue = (float) thWarp();
+}
+
+int TrackerBirch::init(const core::Image& src) {
+  KLT_PixelType *kltimg=(KLT_PixelType*)src.data_;
+
+  KLTSelectGoodFeatures(kltTC_, kltimg, src.cols_,src.rows_, kltFL_);  
+
+  int nfeats=0;
+  for (int i=0; i<countFeatures(); ++i){
+    KLT_Feature& f_klt_i=kltFL_->feature[i];
+    FeatureInfo& f_our_i=feats_.at(i);
+    if (f_klt_i->val>=0){
+      ++nfeats;
+      f_our_i.curr_ = Point(f_klt_i->x, f_klt_i->y);
+      f_our_i.status_=0;
+      f_our_i.age_=0;
+    } else{
+      f_our_i.age_=-1;
+      f_our_i.status_=-111;
+    }
+  }
+
+  // this bootstraps us into sequential mode
+  KLTSetFirstImage(kltTC_, kltimg, src.cols_,src.rows_);
+  
+  return track(src);
+}
+
+int TrackerBirch::track(const core::Image& src) {
+  KLT_PixelType *kltimg=(KLT_PixelType*)src.data_;
+  KLTTrackFeatures(kltTC_, kltimg, kltimg, src.cols_,src.rows_, kltFL_);
+  if (replaceLost()){
+    KLTReplaceLostFeatures(kltTC_, kltimg, src.cols_,src.rows_, kltFL_);
+  }
+  
+  int nfeats=0;
+  for (int i=0 ; i<countFeatures(); ++i){
+    KLT_Feature& f_klt_i=kltFL_->feature[i];
+    FeatureInfo& f_our_i=feats_.at(i);
+    f_our_i.status_= f_klt_i->val;
+    if (f_klt_i->val > 0){
+      f_our_i.age_=-1;
+    } else if (f_klt_i->val ==0) {
+      ++nfeats;
+      f_our_i.prev_=f_our_i.curr_;
+      f_our_i.age_+=1;
+      //prediction
+      f_klt_i->xpred=f_klt_i->x+(f_klt_i->x-(KLT_locType)f_our_i.prev_.x_)/2;
+      f_klt_i->ypred=f_klt_i->y+(f_klt_i->y-(KLT_locType)f_our_i.prev_.y_)/2;
+    } else{
+      f_our_i.age_=-1;
+    }
+    f_our_i.curr_ = Point(f_klt_i->x, f_klt_i->y);
+  }
+
+  return nfeats;
+}
+
+
+int TrackerBirch::countFeatures(){
+  assert(std::atoi(config_["nFeats"].c_str())==feats_.size());
+  return feats_.size();
+}
+
+int TrackerBirch::countTracked(){
+  int nfeats=0;
+  for (int i=0 ; i<countFeatures(); ++i){
+    const KLT_Feature& f_klt_i=kltFL_->feature[i];
+    if (f_klt_i->val >= 0){
+      ++nfeats;
+    }
+  }
+  return nfeats;
+}
+
+FeatureInfo TrackerBirch::feature(int i){
+  return feats_.at(i);
+}
+
+namespace {
+  int test1() {
+    std::cout <<"Basic config test\n";
+    TrackerBirch T;
+    std::cout <<T.getConfigDocs() <<"\n";
+    std::cout <<T.getConfig() <<"\n";
+    return 0;
+  }
+  int test2(std::string s) {
+    std::cout <<"Testing: " <<s <<"\n";
+
+    TrackerBirch T;
+    T.config(s);
+    std::cout <<T.getConfig() <<"\n";
+    return 0;
+  }
+
+  //int bla=test1();
+  //int bla2=test2("warpMode=5 thWarp=20 pyramid=[3 fsigma=1.2] replaceLost=0");
+}
+
+}

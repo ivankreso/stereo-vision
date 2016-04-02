@@ -1,0 +1,43 @@
+#include "feature_detector_brisk.h"
+
+#include "../../core/math_helper.h"
+#include "../base/helper_opencv.h"
+
+namespace {
+
+struct greaterThanPtr : public std::binary_function<const float*, const float*, bool>
+{
+    bool operator () (const float* a, const float* b) const
+    { return *a > *b; }
+};
+
+}
+
+namespace track {
+
+FeatureDetectorBRISK::FeatureDetectorBRISK(int thresh, int octaves, float patternScale)
+{
+  thresh_ = thresh;
+  octaves_ = octaves;
+  pattern_scale_ = patternScale;
+  detector_ = new cv::BRISK(thresh_, octaves_, pattern_scale_);
+}
+
+FeatureDetectorBRISK::~FeatureDetectorBRISK()
+{
+  delete detector_;
+}
+
+void FeatureDetectorBRISK::detect(const cv::Mat& img, std::vector<cv::KeyPoint>& features, cv::Mat& descriptors)
+{
+  (*detector_)(img, cv::Mat(), features, descriptors);
+}
+
+
+double FeatureDetectorBRISK::compare(cv::Mat desc1, cv::Mat desc2)
+{
+  uint64_t dist = core::MathHelper::hammDist(desc1, desc2);
+  return (double)dist;
+}
+
+}

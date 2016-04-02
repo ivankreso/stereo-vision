@@ -1,0 +1,150 @@
+#include "stereo_tracker_libviso.h"
+
+
+namespace track {
+
+using namespace std;
+using namespace vo;
+using namespace libviso;
+
+//StereoTrackerLibviso::StereoTrackerLibviso(VisualOdometryStereo::parameters& param, int max_feats) :
+//   param_(param), max_feats_(max_feats)
+//{
+//   matcher_ = new Matcher(param.match);
+//   feats_left_.resize(max_feats_);
+//   feats_right_.resize(max_feats_);
+//   //age_.assign(max_feats_, -1);
+//}
+
+//StereoTrackerLibviso::StereoTrackerLibviso(VisualOdometryStereo::parameters param) :
+//StereoTrackerLibviso::StereoTrackerLibviso(visodom::VisualOdometryRansac::parameters& param) :
+StereoTrackerLibviso::StereoTrackerLibviso()
+{
+  matcher_ = new Matcher(param_.matcher);
+}
+
+void StereoTrackerLibviso::init(const cv::Mat& img_left, const cv::Mat& img_right)
+{
+  //track(const_cast<uint8_t*>(img_left.data), const_cast<uint8_t*>(img_right.data), img_left.rows, img_left.cols);
+  track(img_left.data, img_right.data, img_left.rows, img_left.cols);
+}
+
+void StereoTrackerLibviso::track(const cv::Mat& img_left, const cv::Mat& img_right)
+{
+  track(img_left.data, img_right.data, img_left.rows, img_left.cols);
+}
+
+void StereoTrackerLibviso::init(core::Image& img_left, core::Image& img_right)
+{
+  track(img_left.data_, img_right.data_, img_left.rows_, img_left.cols_);
+}
+
+void StereoTrackerLibviso::track(core::Image& img_left, core::Image& img_right)
+{
+  track(img_left.data_, img_right.data_, img_left.rows_, img_left.cols_);
+}
+
+void StereoTrackerLibviso::track(uint8_t* img_left, uint8_t* img_right, int rows, int cols)
+{
+   int32_t dims[] = {cols, rows, cols};
+   matcher_->pushBack(img_left, img_right, dims, false);
+   matcher_->matchFeatures(2);
+   matcher_->bucketFeatures(param_.bucket.max_features, param_.bucket.bucket_width, param_.bucket.bucket_height);
+
+   std::vector<Matcher::p_match> matches = matcher_->getMatches();
+   //cout << matches.size() << endl;
+   //std::vector<Matcher::p_match> f_matches = filterFeatures(matches);
+   std::vector<FeatureInfo> feats_left_tmp;
+   std::vector<FeatureInfo> feats_right_tmp;
+   FeatureHelper::LibvisoToTrackerBase(matches, feats_left_tmp, feats_right_tmp);
+
+   size_t newsz = feats_left_tmp.size();
+   feats_left_.resize(newsz);
+   feats_right_.resize(newsz);
+
+   //if(newsz > feats_left_.size()) {
+   //  feats_left_.resize(newsz);
+   //  feats_right_.resize(newsz);
+   //  //age_.assign(newsz, -1);
+   //  max_feats_ = newsz;
+   //}
+   //size_t i;
+   for(size_t i = 0; i < newsz; i++) {
+     feats_left_[i] = feats_left_tmp[i];
+     feats_right_[i] = feats_right_tmp[i];
+     // this is default in this case but just to be sure
+     feats_left_[i].age_ = 1;
+     feats_right_[i].age_ = 1;
+   }
+   //for(; i < feats_left_.size(); i++) {
+   //  feats_left_[i].age_ = -1;
+   //  feats_right_[i].age_ = -1;
+   //}
+
+   // need saving features?
+   //if(frame_cnt_ > 0)
+   //   saveFeatures(matches);
+   //frame_cnt_ += 3;
+}
+
+int StereoTrackerLibviso::countFeatures() const
+{
+   assert(feats_left_.size() == feats_right_.size());
+   return feats_left_.size();
+}
+
+auto StereoTrackerLibviso::featureLeft(int i) const -> track::FeatureInfo
+{
+   return feats_left_.at(i);
+}
+
+auto StereoTrackerLibviso::featureRight(int i) const -> track::FeatureInfo
+{
+   return feats_right_.at(i);
+}
+
+vector<Matcher::p_match> StereoTrackerLibviso::filterFeatures(const vector<Matcher::p_match>& matches)
+{
+   vector<Matcher::p_match> filtered;
+
+   for(size_t i = 0; i < matches.size(); i++) {
+      double d = matches[i].u1p - matches[i].u2p;
+      if(d >= 1.0)
+         filtered.push_back(matches[i]);
+   }
+   return filtered;
+}
+
+
+void StereoTrackerLibviso::saveFeatures(const std::vector<Matcher::p_match>& matches)
+{
+   ostringstream fname;
+   fname << "tracks/frame_" << setw(5) << setfill('0') << frame_cnt_ << ".txt";
+   ofstream file(fname.str(), ofstream::out);
+
+   file << matches.size() << endl;
+   for(auto match : matches) {
+      file << "4 -3 " << match.u1p << " " << match.v1p << " " << match.u2p << " " << match.v2p;
+      file << " 0 " << match.u1c << " " << match.v1c << " " << match.u2c << " " << match.v2c << "\n";
+   }
+
+   file.close();
+}
+
+void StereoTrackerLibviso::removeTrack(int id)
+{
+  feats_left_[id].age_ = -1;
+  feats_right_[id].age_ = -1;
+}
+
+int StereoTrackerLibviso::countActiveTracks() const
+{
+  int cnt = 0;
+  for(size_t i = 0; i < feats_left_.size(); i++) {
+    if(feats_left_[i].age_ > 0)
+      cnt++;
+  }
+  return cnt;
+}
+
+} // namespace end

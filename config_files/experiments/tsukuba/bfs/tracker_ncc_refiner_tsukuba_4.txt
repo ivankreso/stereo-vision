@@ -1,0 +1,25 @@
+output_folder   = ./results/tracker_ncc_refiner_tsukuba_4/
+odometry_method = libviso
+ransac_iters    = 400
+
+tracker         = StereoTrackerRefiner
+refiner_tracker = StereoTracker
+max_disparity   = 200
+stereo_wsz      = 15
+ncc_threshold_s = 0.8
+
+tracker_mono    = TrackerBFM
+max_features    = 4096
+ncc_threshold_m = 0.8
+ncc_patch_size  = 15
+search_wsz      = 160
+
+detector  = FeatureDetectorHarrisCV
+harris_block_sz   = 3
+harris_filter_sz  = 3
+harris_k          = 0.04
+harris_thr        = 0.0000001
+harris_margin     = 15
+
+use_bundle_adjustment   = true
+ba_frames               = 6

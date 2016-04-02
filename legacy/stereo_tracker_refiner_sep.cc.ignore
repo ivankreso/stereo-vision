@@ -1,0 +1,158 @@
+#include "stereo_tracker_refiner.h"
+
+namespace track {
+
+StereoTrackerRefiner::StereoTrackerRefiner(StereoTrackerBase* tracker, FeatureRefinerBase* refiner_left,
+      FeatureRefinerBase* refiner_right) : tracker_(tracker), refiner_left_(refiner_left), 
+      refiner_right_(refiner_right)
+{
+   int max_feats = tracker->countFeatures();
+   points_lp_.resize(max_feats);
+   points_rp_.resize(max_feats);
+   points_lc_.resize(max_feats);
+   points_rc_.resize(max_feats);
+   age_.resize(max_feats);
+}
+
+
+StereoTrackerRefiner::~StereoTrackerRefiner()
+{}
+
+
+void StereoTrackerRefiner::init(core::Image& img_left, core::Image& img_right)
+{
+   tracker_->init(img_left, img_right);
+
+   for(int i = 0; i < tracker_->countFeatures(); i++) 
+   {
+      FeatureInfo f_left = tracker_->featureLeft(i);
+      FeatureInfo f_right = tracker_->featureRight(i);
+      points_lc_[i] = f_left.curr_;
+      points_rc_[i] = f_right.curr_;
+      age_[i] = f_left.age_;
+   }
+   imgset_left_.compute(img_left);
+   imgset_right_.compute(img_right);
+}
+
+void StereoTrackerRefiner::track(core::Image& img_left, core::Image& img_right)
+{
+   tracker_->track(img_left, img_right);
+
+   // copy current to prev
+   points_lp_ = points_lc_;
+   points_rp_ = points_rc_;
+   std::map<int, core::Point> new_tracks_left, new_tracks_right;
+   std::map<int, core::Point> refined_left, refined_right;
+
+   for(int i = 0; i < tracker_->countFeatures(); i++) 
+   {
+      FeatureInfo f_left = tracker_->featureLeft(i);
+      FeatureInfo f_right = tracker_->featureRight(i);
+
+      age_[i] = f_left.age_;
+
+      if(age_[i] >= 1) {
+         // if it is a first track then add the feature reference point for refinement
+         if(age_[i] == 1) {
+            new_tracks_left.insert(std::pair<int,core::Point>(i, f_left.prev_));
+            new_tracks_right.insert(std::pair<int,core::Point>(i, f_right.prev_));
+            //std::cout << f_left.prev_ << "\n";
+            //std::cout << f_right.prev_ << "\n";
+            // dont need this
+            //points_lp_[i] = f_left.prev_;
+            //points_rp_[i] = f_right.prev_;
+         }
+         // add feature track points for refinement
+         refined_left.insert(std::pair<int,core::Point>(i, f_left.curr_));
+         refined_right.insert(std::pair<int,core::Point>(i, f_right.curr_));
+      }
+      // if dead or newly added - remove it from refiner
+      else if(age_[i] < 1) {
+         // if newly added - add it to point array
+         if(age_[i] == 0) {
+            points_lc_[i] = f_left.curr_;
+            points_rc_[i] = f_right.curr_;
+         }
+         if(refiner_left_->featureExists(i))
+            refiner_left_->removeFeature(i);
+         if(refiner_right_->featureExists(i))
+            refiner_right_->removeFeature(i);
+      }
+   }
+
+   // add new track reference points to refiner using prev imgsets
+   refiner_left_->addFeatures(imgset_left_, new_tracks_left);
+   refiner_right_->addFeatures(imgset_right_, new_tracks_right);
+
+   // compute new images
+   imgset_left_.compute(img_left);
+   imgset_right_.compute(img_right);
+
+   // refine the points in current frames
+   refiner_left_->refineFeatures(imgset_left_, refined_left);
+   refiner_right_->refineFeatures(imgset_right_, refined_right);
+
+   // update current points positions
+   // TODO - check FeatureData
+   // refiner_->getFeature(id);
+   for(auto pt : refined_left) {
+      core::Point rpt = refiner_left_->getFeature(pt.first).pt();
+      auto status =  refiner_left_->getFeature(pt.first).status_;
+      if(pt.first == 151) {
+         std::cout << rpt << "\n";
+         std::cout << pt.second << "\n";
+      }
+      if(status == 0)
+         points_lc_[pt.first] = rpt;
+      else {
+         tracker_->removeTrack(pt.first);
+         std::cout << status << ": " << pt.second << " --> " << rpt << "\n";
+         points_lc_[pt.first] = pt.second;
+      }
+   }
+   for(auto pt : refined_right) {
+      core::Point rpt = refiner_right_->getFeature(pt.first).pt();
+      auto status =  refiner_right_->getFeature(pt.first).status_;
+      if(pt.first == 151) {
+         std::cout << rpt << "\n";
+         std::cout << pt.second << "\n";
+      }
+      // if status == OK
+      if(status == 0) {
+         points_rc_[pt.first] = rpt;
+      }
+      else {
+         tracker_->removeTrack(pt.first);
+         std::cout << status << ": " << pt.second << " --> " << rpt << "\n";
+         points_rc_[pt.first] = pt.second;
+      }
+   }
+}
+
+int StereoTrackerRefiner::countFeatures() const
+{
+   return tracker_->countFeatures();
+}
+
+FeatureInfo StereoTrackerRefiner::featureLeft(int i) const
+{
+   FeatureInfo feat;
+   feat.prev_ = points_lp_[i];
+   feat.curr_ = points_lc_[i];
+   feat.age_ = age_[i];
+   feat.status_ = age_[i] + 1;
+   return std::move(feat);
+}
+
+FeatureInfo StereoTrackerRefiner::featureRight(int i) const
+{
+   FeatureInfo feat;
+   feat.prev_ = points_rp_[i];
+   feat.curr_ = points_rc_[i];
+   feat.age_ = age_[i];
+   feat.status_ = age_[i] + 1;
+   return std::move(feat);
+}
+
+}

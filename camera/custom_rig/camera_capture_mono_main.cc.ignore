@@ -1,0 +1,81 @@
+#include <iostream>
+#include <iomanip>
+#include <chrono>
+#include <cstdio>
+
+#include <opencv2/highgui/highgui.hpp>
+#include <dc1394/dc1394.h>
+
+#include <opencv2/imgproc/imgproc.hpp>
+
+#include "camera_capture_libdc1394.h"
+
+int main(int argc, char** argv) {
+  dc1394camera_list_t* list;
+  dc1394error_t err;
+  dc1394_t* bus_data = dc1394_new();
+  if (!bus_data) return 1;
+  err = dc1394_camera_enumerate(bus_data, &list);
+  DC1394_ERR_RTN(err, "Failed to enumerate cameras");
+
+  printf("Num of connected cameras = %d\n", list->num);
+  if (list->num != 1) {
+    dc1394_log_error("1 cameras not found!\n");
+    return 1;
+  }
+
+  bool use_external_trigger = false;
+  cam::CameraCaptureLibdc1394 cam(list->ids[0].guid, bus_data, use_external_trigger);
+  dc1394_camera_free_list(list);
+
+  cv::Mat img;
+  cv::Mat disp_img;
+
+  std::string save_folder = "/opt/kivan/datasets/calib/basler/";
+  //double delta_sum = 0;
+  //double tdiff_prev;
+  uint64_t i = 0;
+  //uint64_t save_idx = 0;
+  //uint64_t left_time = 0, right_time = 0;
+  auto start = std::chrono::system_clock::now();
+  while (true) {
+  //for (; i < 300; i++) {
+    printf("\nframe = %lu\n", i);
+    cam.Grab(img);
+
+    //printf("left  timestamp = %lu us\n", left_time);
+    //printf("right timestamp = %lu us\n", right_time);
+    //double tdiff = static_cast<int>(right_time - left_time) / 1000.0;
+    //printf("time diff = %.2f ms\n", tdiff);
+    //if (i > 0)
+    //  delta_sum += (tdiff - tdiff_prev);
+    i++;
+    //tdiff_prev = tdiff;
+    //printf("delta time = %f msec\n", dt_msec);
+    //printf("delta sum = %.2f ms\n\n", delta_sum);
+    if (img.channels() == 2) {
+      cv::cvtColor(img, disp_img, CV_YUV2BGR_UYVY);
+    }
+    else {
+      img.copyTo(disp_img);
+    }
+    cv::imshow("image", disp_img);
+    int key = cv::waitKey(10);
+    if (key == 10) {
+      //std::stringstream prefix;
+      //prefix << std::setw(6) << std::setfill('0') << save_idx;
+      //cv::imwrite(save_folder + "left/" + prefix.str() + "_left.png", left_img);
+      //cv::imwrite(save_folder + "right/" + prefix.str() + "_right.png", right_img);
+      //save_idx++;
+    }
+    else if (key == 27) {
+      break;
+    }
+  }
+  auto end = std::chrono::system_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+  std::cout << "Elapsed time = " << elapsed.count() << " sec\n";
+  std::cout << "FPS = " << static_cast<double>(i) / elapsed.count() << "\n";
+  
+  return 0;
+}

@@ -1,0 +1,5 @@
+camera_params  = /home/kivan/Projects/cv-stereo/config_files/camera_params_kitti_00.txt
+source_folder  = /home/kivan/Projects/datasets/KITTI/sequences_gray/00/
+output_folder  = /home/kivan/projects/
+imglist        = /home/kivan/Projects/cv-stereo/config_files/artificial_lst.xml
+

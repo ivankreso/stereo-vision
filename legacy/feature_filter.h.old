@@ -1,0 +1,46 @@
+#ifndef FEATURE_FILTER_H_
+#define FEATURE_FILTER_H_
+
+#include <iostream>
+#include <vector>
+#include <deque>
+using namespace std;
+
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/features2d/features2d.hpp>
+using namespace cv;
+
+
+#define BORDER_FILTER	5
+
+
+class FeatureFilter
+{
+public:
+   static int addNewFeatures(Mat& img, vector<KeyPoint>& features, vector<uchar>& status,
+				  GoodFeaturesToTrackDetector& detector, Mat& init_mask);
+   static void addNewFeatures(Mat& img, vector<KeyPoint>& features, vector<uchar>& status, int max_features,
+			      int block_width, int block_height, GoodFeaturesToTrackDetector& detector);
+   static void filterFeatures(vector<KeyPoint>& features, vector<KeyPoint>& filtered_features, vector<int>& blocks,
+			      int max_features, double block_width, double block_height, Size img_size);
+   static void createBorderMask(int rows, int cols, int mask_size, Mat& mask);
+
+
+   static void addNewFeaturesWithDuplicates(Mat& img, vector<KeyPoint>& features, vector<uchar>& status,
+					    GoodFeaturesToTrackDetector& detector);
+
+
+   static void addNewFeatures(Mat& img, vector<KeyPoint>& features, vector<uchar>& status, vector<int>& blocks,
+			      int max_features, int block_width, int block_height,
+			      GoodFeaturesToTrackDetector& detector, GoodFeaturesToTrackDetector detector_full);
+   static void createMask(Mat& mask, int i, int block_rows, int block_cols);
+
+   static vector<KeyPoint>&& filterFeatures(vector<KeyPoint>& features, unsigned n);
+   static void checkStatus(vector<uchar>& status);
+   static void drawOpticalFlow(Mat& img, const vector<KeyPoint>& points_prev, const vector<KeyPoint>& points_next,
+			       const vector<uchar>& track_status, const Scalar& color);
+
+};
+
+#endif

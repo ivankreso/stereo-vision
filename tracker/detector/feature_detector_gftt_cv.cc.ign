@@ -1,0 +1,66 @@
+#include "feature_detector_gftt_cv.h"
+#include "../base/helper_opencv.h"
+
+using namespace cv;
+
+namespace track {
+
+FeatureDetectorGFTTCV::FeatureDetectorGFTTCV(int maxCorners, double qualityLevel,
+    double minDistance, int blockSize, bool useHarrisDetector, double k, Mat mask,
+    int hbins, int vbins, int fpb)
+{
+  mask_ = mask;
+  detector_ = std::shared_ptr<FeatureDetector>(new GFTTDetector(maxCorners, qualityLevel, minDistance, blockSize, useHarrisDetector, k));
+  x1_ = 0; y1_ = 0;
+  x2_ = 10000; y2_ = 10000;
+  h_bins_ = hbins;
+  v_bins_ = vbins;
+  fpb_ = fpb;      // 20,  15 - 30
+}
+
+void FeatureDetectorGFTTCV::detect(const core::Image& img, std::vector<core::Point>& features)
+{
+  // cornerHarris(InputArray src, OutputArray dst, int blockSize, int ksize, double k, int borderType=BORDER_DEFAULT )
+
+  cvimg_ = cv::Mat::zeros(img.rows_, img.cols_, CV_64F);
+  HelperOpencv::ImageToMat(img, cvimg_);
+  detector_->detect(cvimg_, keypoints_, mask_);
+
+  //features.resize(keypoints_.size());
+  //for(size_t i = 0; i < features.size(); i++) {
+  //   features[i].x_ = keypoints_[i].pt.x;
+  //   features[i].y_ = keypoints_[i].pt.y;
+  //}
+
+  std::vector<int> bins(h_bins_ * v_bins_, 0);
+  double bin_w = (double)img.cols_ / h_bins_;
+  double bin_h = (double)img.rows_ / v_bins_;
+  int r, c;
+
+  features.clear();
+  core::Point pt;
+  for(size_t i = 0; i < keypoints_.size(); i++) {
+    pt.x_ = keypoints_[i].pt.x;
+    pt.y_ = keypoints_[i].pt.y;
+    //std::cout << x1_ << " - " << y1;
+    // filter with margins
+    if(pt.x_ >= x1_ && pt.y_ >=  y1_ && pt.x_ <= x2_ && pt.y_ <= y2_) {
+      // filter uniformly
+      c = (int)pt.x_ / bin_w;
+      r = (int)pt.y_ / bin_h;
+      assert(c >= 0 && c < h_bins_);
+      assert(r >= 0 && r < v_bins_);
+
+      if(bins[r*h_bins_ + c] <= fpb_) {
+        features.push_back(pt);
+        bins[r*h_bins_ + c]++;
+      }
+    }
+  }
+
+  //cv::Mat cvimg;
+  //track::HelperOpencv::ImageToMat(img, cvimg);
+  //vo::FeatureHelper::drawFeatures(features, cvimg);
+}
+
+}

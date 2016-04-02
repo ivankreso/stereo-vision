@@ -1,0 +1,330 @@
+#include "deformation_field_solver.h"
+
+#include <opencv2/highgui/highgui.hpp>
+
+#include "../../tracker/base/eval_helper.h"
+
+namespace optim
+{
+
+DeformationFieldSolver::DeformationFieldSolver(const double* const cam_intr, int bin_rows, int bin_cols,
+                                               int img_rows, int img_cols, std::string save_filepath) :
+                                               bin_rows_(bin_rows), bin_cols_(bin_cols), img_rows_(img_rows),
+                                               img_cols_(img_cols), save_filepath_(save_filepath)
+{
+  num_bins_ = bin_rows_ * bin_cols_;
+  bin_height_ = static_cast<double>(img_rows) / static_cast<double>(bin_rows);
+  bin_width_ = static_cast<double>(img_cols) / static_cast<double>(bin_cols);
+  left_dx_ = new double[num_bins_];
+  left_dy_ = new double[num_bins_];
+  left_num_points_ = new uint64_t[num_bins_];
+  for (int i = 0; i < num_bins_; i++) {
+    left_dx_[i] = 0.0;
+    left_dy_[i] = 0.0;
+    left_num_points_[i] = 0;
+  }
+  for (int i = 0; i < 5; i++)
+    cam_intr_[i] = cam_intr[i];
+}
+
+DeformationFieldSolver::~DeformationFieldSolver()
+{
+  delete[] left_dx_;
+  delete[] left_dy_;
+  delete[] left_num_points_;
+}
+
+// Rt is the GT motion of world points with respect to camera
+void DeformationFieldSolver::UpdateTracks(const track::StereoTrackerBase& tracker, const cv::Mat& Rt)
+{
+  std::vector<std::tuple<core::Point,core::Point>> pts_left, pts_right;
+  std::vector<int> age;
+
+  gt_rt_.push_back(Rt.clone());
+
+  std::array<double,3> trans;
+  trans[0] = Rt.at<double>(0,3);
+  trans[1] = Rt.at<double>(1,3);
+  trans[2] = Rt.at<double>(2,3);
+
+  Eigen::Matrix3d mrot;
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++)
+      mrot(i,j) = Rt.at<double>(i,j);
+  //double angleAxis[3];
+  //ceres::RotationMatrixToAngleAxis((const double*)mrot.data(), angleAxis);
+  std::array<double,3> euler_angles;
+  ceres::RotationMatrixToAngleAxis((const double*)mrot.data(), &euler_angles[0]);
+  //for (int i = 0; i < 3; i++) {
+  //  if (angleAxis[i] != euler_angles[i]) throw "Error!";
+  //  std::cout << angleAxis[i] << " == " << euler_angles[i] << "\n";
+  //}
+  cam_translation_.push_back(trans);
+  cam_rotation_.push_back(euler_angles);
+
+  for (int i = 0; i < tracker.countFeatures(); i++) {
+    track::FeatureInfo feat_left = tracker.featureLeft(i);
+    track::FeatureInfo feat_right = tracker.featureRight(i);
+    age.push_back(feat_left.age_);
+    auto left_track = std::make_tuple(feat_left.prev_, feat_left.curr_);
+    auto right_track = std::make_tuple(feat_right.prev_, feat_right.curr_);
+    pts_left.push_back(left_track);
+    pts_right.push_back(right_track);
+  }
+
+  left_tracks_.push_back(pts_left);
+  right_tracks_.push_back(pts_right);
+  age_.push_back(age);
+}
+
+// Rt is the GT motion of the camera to the world
+void DeformationFieldSolver::UpdateReverseTracks(const track::StereoTrackerBase& tracker, const cv::Mat& Rt)
+{
+  std::vector<std::tuple<core::Point,core::Point>> pts_left, pts_right;
+  std::vector<int> age;
+
+  gt_rt_.push_back(Rt.clone());
+
+  std::array<double,3> trans;
+  trans[0] = Rt.at<double>(0,3);
+  trans[1] = Rt.at<double>(1,3);
+  trans[2] = Rt.at<double>(2,3);
+
+  Eigen::Matrix3d mrot;
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++)
+      mrot(i,j) = Rt.at<double>(i,j);
+  //double angleAxis[3];
+  //ceres::RotationMatrixToAngleAxis((const double*)mrot.data(), angleAxis);
+  std::array<double,3> euler_angles;
+  ceres::RotationMatrixToAngleAxis((const double*)mrot.data(), &euler_angles[0]);
+  //for (int i = 0; i < 3; i++) {
+  //  if (angleAxis[i] != euler_angles[i]) throw "Error!";
+  //  std::cout << angleAxis[i] << " == " << euler_angles[i] << "\n";
+  //}
+  cam_translation_.push_back(trans);
+  cam_rotation_.push_back(euler_angles);
+
+  for (int i = 0; i < tracker.countFeatures(); i++) {
+    track::FeatureInfo feat_left = tracker.featureLeft(i);
+    track::FeatureInfo feat_right = tracker.featureRight(i);
+    age.push_back(feat_left.age_);
+    auto left_track = std::make_tuple(feat_left.curr_, feat_left.prev_);
+    auto right_track = std::make_tuple(feat_right.curr_, feat_right.prev_);
+    pts_left.push_back(left_track);
+    pts_right.push_back(right_track);
+  }
+
+  left_tracks_.push_back(pts_left);
+  right_tracks_.push_back(pts_right);
+  age_.push_back(age);
+}
+
+void DeformationFieldSolver::Solve()
+{
+  ceres::Problem problem;
+  // first count the points per cell
+  for (size_t i = 0; i < left_tracks_.size(); i++) {
+    for (size_t j = 0; j < left_tracks_[i].size(); j++) {
+      if (age_[i][j] < 1) continue;
+      core::Point& left_prev = std::get<0>(left_tracks_[i][j]);
+      core::Point& left_curr = std::get<1>(left_tracks_[i][j]);
+      core::Point& right_prev = std::get<0>(right_tracks_[i][j]);
+      core::Point& right_curr = std::get<1>(right_tracks_[i][j]);
+      double disp = left_prev.x_ - right_prev.x_;
+      //if(disp > 1.0)
+      if(disp > 0.1) {
+        int lp_bin = GetBinNum(left_prev);
+        int lc_bin = GetBinNum(left_curr);
+        int rp_bin = GetBinNum(right_prev);
+        int rc_bin = GetBinNum(right_curr);
+        left_num_points_[lp_bin]++;
+        left_num_points_[lc_bin]++;
+        left_num_points_[rp_bin]++;
+        left_num_points_[rc_bin]++;
+      }
+    }
+  }
+
+
+  // add residuals
+  for (size_t i = 0; i < left_tracks_.size(); i++) {
+    for (size_t j = 0; j < left_tracks_[i].size(); j++) {
+      if (age_[i][j] < 1) continue;
+      core::Point& left_prev = std::get<0>(left_tracks_[i][j]);
+      core::Point& left_curr = std::get<1>(left_tracks_[i][j]);
+      core::Point& right_prev = std::get<0>(right_tracks_[i][j]);
+      core::Point& right_curr = std::get<1>(right_tracks_[i][j]);
+      double disp = left_prev.x_ - right_prev.x_;
+      //if(disp > 1.0)
+      if(disp > 0.1)
+        AddCostResidual(left_prev, left_curr, right_prev, right_curr,
+                        cam_intr_, cam_translation_[i], cam_rotation_[i], problem);
+    }
+  }
+
+  //double lower_bound = -0.000001;
+  //double upper_bound = 0.000001;
+  //int central_bin = num_bins_ / 2;
+  //problem.SetParameterLowerBound(&left_dx_[central_bin], 0, lower_bound);
+  //problem.SetParameterLowerBound(&left_dy_[central_bin], 0, lower_bound);
+  //problem.SetParameterLowerBound(&right_dx_[central_bin], 0, lower_bound);
+  //problem.SetParameterLowerBound(&right_dy_[central_bin], 0, lower_bound);
+  //problem.SetParameterUpperBound(&left_dx_[central_bin], 0, upper_bound);
+  //problem.SetParameterUpperBound(&left_dy_[central_bin], 0, upper_bound);
+  //problem.SetParameterUpperBound(&right_dx_[central_bin], 0, upper_bound);
+  //problem.SetParameterUpperBound(&right_dy_[central_bin], 0, upper_bound);
+
+  //for (int i = 0; i < num_bins_; i++) {
+  //  problem.SetParameterLowerBound(&left_dx_[i], 0, -2.0);
+  //  //problem.SetParameterLowerBound(left_dx_, i, -2.0);
+  //  //problem.SetParameterLowerBound(left_dy_, i, -2.0);
+  //  //problem.SetParameterLowerBound(right_dx_, i, -2.0);
+  //  //problem.SetParameterLowerBound(right_dy_, i, -2.0);
+  //  //problem.SetParameterUpperBound(left_dx_, i, 2.0);
+  //  //problem.SetParameterUpperBound(left_dy_, i, 2.0);
+  //  //problem.SetParameterUpperBound(right_dx_, i, 2.0);
+  //  //problem.SetParameterUpperBound(right_dy_, i, 2.0);
+  //}
+
+  // Run the solver!
+  ceres::Solver::Options options;
+  options.minimizer_progress_to_stdout = true;
+  //options.linear_solver_type = ceres::LinearSolverType::DENSE_QR;
+  options.minimizer_type = ceres::MinimizerType::TRUST_REGION;
+  //options.trust_region_strategy_type = ceres::TrustRegionStrategyType::LEVENBERG_MARQUARDT;
+  //options.initial_trust_region_radius = 1e1; //1e4
+  //options.max_trust_region_radius = 1e16;
+
+  //options.minimizer_type = ceres::MinimizerType::LINE_SEARCH;
+  //options.line_search_direction_type = ceres::LineSearchDirectionType::BFGS;
+
+  //options.line_search_direction_type = ceres::LineSearchDirectionType::STEEPEST_DESCENT;
+  //options.line_search_direction_type = ceres::LineSearchDirectionType::LBFGS;
+  //options.line_search_direction_type = ceres::LineSearchDirectionType::NONLINEAR_CONJUGATE_GRADIENT;
+  //options.trust_region_strategy_type = ceres::TrustRegionStrategyType::DOGLEG;
+  //options.step_size
+  //options.line_se
+  //options.parameter_tolerance = 1e-18;
+  //options.function_tolerance = 1e-18;
+  //options.gradient_tolerance = 1e-18;
+  //options.use_nonmonotonic_steps = true;
+  //options.max_consecutive_nonmonotonic_steps = 5;
+  options.max_num_iterations = 1000;
+  options.num_threads = 6;
+  options.num_linear_solver_threads = 6;
+  //options.num_threads = 12;
+  //options.num_linear_solver_threads = 1;
+  ceres::Solver::Summary summary;
+  ceres::Solve(options, &problem, &summary);
+  std::cout << summary.BriefReport() << "\n\n--Full report--\n";
+  std::cout << summary.FullReport() << "\n";
+
+  // TODO: interpolate between 4 cells for each cell which was skipped in optimization
+
+  int img_cols = 1241;
+  int img_rows = 376;
+  double scale = 1.3;
+  int cell_cols = scale*img_cols / 15;
+  int cell_rows = scale*img_rows / 5;
+  //cv::Mat param_img = cv::Mat::zeros(scale*img_rows, scale*img_cols, CV_8UC3);
+  cv::Mat param_img = cv::Mat::zeros(bin_rows_*cell_rows, bin_cols_*cell_cols, CV_8UC3);
+  track::EvalHelper::DrawDeformationFieldParams(bin_rows_, bin_cols_, left_dx_, left_dy_, right_dx_, right_dy_,
+                                                left_num_points_, right_num_points_, param_img);
+  //cv::imshow("param_image", param_img);
+  //cv::waitKey(0);
+  cv::imwrite(save_filepath_.substr(0, save_filepath_.size()-4) + ".png", param_img);
+
+  //cv::FileStorage mat_file("deformation_field_matrix.yml", cv::FileStorage::WRITE);
+  cv::FileStorage mat_file(save_filepath_, cv::FileStorage::WRITE);
+  cv::Mat mat;
+  ConvertArrayToMatrix(left_dx_, mat);
+  mat_file << "left_dx" << mat;
+  ConvertArrayToMatrix(left_dy_, mat);
+  mat_file << "left_dy" << mat;
+  ConvertArrayToMatrix(right_dx_, mat);
+  mat_file << "right_dx" << mat;
+  ConvertArrayToMatrix(right_dy_, mat);
+  mat_file << "right_dy" << mat;
+
+  //for (int i = 0; i < num_bins_; i++) {
+  //  std::cout << "\nbin num = " << i << "\n";
+  //  std::cout << "left_dx = " << left_dx_[i] << "\n";
+  //  std::cout << "left_dy = " << left_dy_[i] << "\n";
+  //  std::cout << "right_dx = " << right_dx_[i] << "\n";
+  //  std::cout << "right_dy = " << right_dy_[i] << "\n";
+  //}
+}
+
+void DeformationFieldSolver::AddCostResidual(
+    const core::Point& left_prev, const core::Point& left_curr,
+    const core::Point& right_prev, const core::Point& right_curr,
+    const double* const cam_intr,
+    const std::array<double,3>& cam_trans,
+    const std::array<double,3>& cam_rot,
+    ceres::Problem& ceres_problem)
+{
+  int lp_bin = GetBinNum(left_prev);
+  int lc_bin = GetBinNum(left_curr);
+  int rp_bin = GetBinNum(right_prev);
+  int rc_bin = GetBinNum(right_curr);
+
+  // prevent overfitting - skip track if one of 4 points is in cell containing less then min_points points
+  const int min_points = 4;
+  if (left_num_points_[lp_bin] < min_points || left_num_points_[lc_bin] < min_points ||
+      left_num_points_[rp_bin] < min_points || left_num_points_[rc_bin] < min_points)
+    return;
+
+  //double loss_scale = 0.5;
+  //double loss_scale = 0.01; // on tsukuba - smaller shrinking
+
+  //ceres::LossFunction* loss_func = new ceres::CauchyLoss(0.5);
+  //ceres::LossFunction* loss_func = new ceres::CauchyLoss(8.0);
+  ceres::LossFunction* loss_func = nullptr; // square loss
+  bool share_left = (lp_bin == lc_bin);
+  bool share_right = (rp_bin == rc_bin);
+  if (!share_left && !share_right) {
+    //std::cout << "Adding residual\n";
+    ceres::CostFunction* cost_residual = new ceres::AutoDiffCostFunction<ReprojectionErrorResidual,
+        4,1,1,1,1,1,1,1>(new ReprojectionErrorResidual(left_prev, left_curr, right_prev, right_curr,
+        cam_intr, cam_trans, cam_rot));
+    //ceres_problem.AddResidualBlock(cost_residual, NULL /* squared loss */,
+    ceres_problem.AddResidualBlock(cost_residual, loss_func,
+        &left_dx_[lp_bin], &left_dy_[lp_bin],
+        &left_dx_[lc_bin], &left_dy_[lc_bin],
+        &left_dx_[rp_bin],
+        &left_dx_[rc_bin], &left_dy_[rc_bin]);
+  }
+  else if (share_left && !share_right) {
+    ceres::CostFunction* cost_residual = new ceres::AutoDiffCostFunction<ReprojectionErrorResidualShareLeft,
+        4,1,1,1,1,1>(new ReprojectionErrorResidualShareLeft(left_prev, left_curr, right_prev, right_curr,
+        cam_intr, cam_trans, cam_rot));
+    //ceres_problem.AddResidualBlock(cost_residual, NULL /* squared loss */,
+    ceres_problem.AddResidualBlock(cost_residual, loss_func,
+        &left_dx_[lp_bin], &left_dy_[lp_bin],
+        &left_dx_[rp_bin],
+        &left_dx_[rc_bin], &left_dy_[rc_bin]);
+  }
+  else if (!share_left && share_right) {
+    ceres::CostFunction* cost_residual = new ceres::AutoDiffCostFunction<ReprojectionErrorResidualShareRight,
+        4,1,1,1,1,1,1>(new ReprojectionErrorResidualShareRight(left_prev, left_curr, right_prev, right_curr,
+        cam_intr, cam_trans, cam_rot));
+    //ceres_problem.AddResidualBlock(cost_residual, NULL /* squared loss */,
+    ceres_problem.AddResidualBlock(cost_residual, loss_func,
+        &left_dx_[lp_bin], &left_dy_[lp_bin],
+        &left_dx_[lc_bin], &left_dy_[lc_bin],
+        &left_dx_[rc_bin], &left_dy_[rc_bin]);
+  }
+  else {
+    ceres::CostFunction* cost_residual =
+        new ceres::AutoDiffCostFunction<ReprojectionErrorResidualShareLeftAndRight,4,1,1,1,1>(
+        new ReprojectionErrorResidualShareLeftAndRight(left_prev, left_curr, right_prev, right_curr,
+        cam_intr, cam_trans, cam_rot));
+    //ceres_problem.AddResidualBlock(cost_residual, NULL /* squared loss */,
+    ceres_problem.AddResidualBlock(cost_residual, loss_func,
+        &left_dx_[lp_bin], &left_dy_[lp_bin],
+        &left_dx_[rc_bin], &left_dy_[rc_bin]);
+  }
+}
+
+}

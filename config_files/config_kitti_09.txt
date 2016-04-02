@@ -1,0 +1,5 @@
+camera_params  = /home/kivan/source/cv-stereo/config_files/camera_params_kitti_04.txt
+source_folder  = /home/kivan/datasets/KITTI/sequences_gray/09/
+imglist        = /home/kivan/source/cv-stereo/config_files/kitti_09_lst.xml
+groundtruth    = /home/kivan/source/cv-stereo/data/GT/KITTI/poses/09.txt
+deformation_field   = /home/kivan/Dropbox/experiment_data/04_deformation_field_matrix.yml

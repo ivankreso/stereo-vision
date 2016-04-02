@@ -1,0 +1,80 @@
+#include "cv_plotter.h"
+
+using namespace std;
+using namespace cv;
+
+CvPlotter::CvPlotter(unsigned w, unsigned h, double sf, double cx, double cy)
+{
+   _scale_factor = sf;
+   _window_width = w;
+   _window_height = h;
+   _cx = cx;
+   _cy = cy;
+   _thickness = kDefaultThickness;
+   _line_type = kDefaultLineType;
+}
+
+CvPlotter::CvPlotter(unsigned w, unsigned h)
+{
+   _scale_factor = 1.0;
+   _window_width = w;
+   _window_height = h;
+   _cx = 300.0;
+   _cy = 300.0;
+   _thickness = kDefaultThickness;
+   _line_type = kDefaultLineType;
+}
+
+void CvPlotter::drawLine(Point& pt1, Point& pt2, Mat& img)
+{
+   line(img, pt1, pt2, Scalar(255, 255, 255), _thickness, _line_type);
+}
+
+void CvPlotter::drawLine(Mat& pt1, Mat& pt2, Mat& img)
+{
+   assert(img.cols == _window_width && img.rows == _window_height);
+   Point pt_start = matToPoint(pt1);
+   Point pt_end = matToPoint(pt2);
+   drawLine(pt_start, pt_end, img);
+}
+
+
+Point CvPlotter::matToPoint(Mat& coord)
+{
+   Point pt;
+   pt.x = _cx + (coord.at<double>(0,0) * _scale_factor);
+   pt.y = _window_height - _cy - (coord.at<double>(2,0) * _scale_factor);
+   return pt;
+}
+
+
+void CvPlotter::drawFirstFrames(string filename, Mat& last_location, Mat& disp)
+{
+   ifstream file(filename);
+   string line;
+   double motion_params[7];
+
+   Mat prev_location_sba = Mat::zeros(1, 4, CV_64F);
+   while(std::getline(file, line)) {
+      stringstream stream(line);
+      string val;
+      //cout << "LINE: " << line << endl;
+      for(int i = 0; i < 7; i++) {
+	 stream >> val;
+	 motion_params[i] = stod(val);
+	 //cout << "READ: " << motion_params[i] << endl << endl;
+      }
+
+      Mat location_sba = Mat::zeros(1, 4, CV_64F);
+      location_sba.at<double>(0,0) = -motion_params[4]; // TODO
+      location_sba.at<double>(0,1) = -motion_params[5];
+      location_sba.at<double>(0,2) = -motion_params[6];
+      Point pt1 = matToPoint(prev_location_sba);
+      Point pt2 = matToPoint(location_sba);
+      drawLine(pt1, pt2, disp);
+      prev_location_sba = location_sba;
+   }
+   last_location = prev_location_sba;
+
+   file.close();
+}

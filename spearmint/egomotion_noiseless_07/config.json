@@ -1,0 +1,39 @@
+{
+    "language"        : "PYTHON",
+    "main-file"       : "egomotion.py",
+    "experiment-name" : "egomotion_noiseless",
+    "likelihood"      : "NOISELESS",
+    "variables" : {
+        "patch_size" : {
+            "type" : "INT",
+            "size" : 1,
+            "min"  : 11,
+            "max"  : 31
+        },
+        "num_levels" : {
+            "type" : "INT",
+            "size" : 1,
+            "min"  : 1,
+            "max"  : 8
+        },
+        "scale_factor" : {
+            "type" : "FLOAT",
+            "size" : 1,
+            "min"  : 1.0,
+            "max"  : 1.2
+        },
+        "max_dist_stereo" : {
+            "type" : "INT",
+            "size" : 1,
+            "min"  : 20,
+            "max"  : 70
+        },
+        "max_dist_mono" : {
+            "type" : "INT",
+            "size" : 1,
+            "min"  : 20,
+            "max"  : 70
+        }
+    }
+}
+

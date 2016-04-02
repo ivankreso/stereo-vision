@@ -1,0 +1,8 @@
+camera_params  = /home/kivan/source/cv-stereo/config_files/camera_params_kitti_04.txt
+groundtruth    = /home/kivan/source/cv-stereo/data/GT/KITTI/poses/05.txt
+left_folder    = /home/kivan/datasets/KITTI/raw/05/image_0/
+right_folder    = /home/kivan/datasets/KITTI/raw/05/image_1/
+start_num      = 5
+end_num        = 2765
+num_width      = 10
+dataset_name   = 05

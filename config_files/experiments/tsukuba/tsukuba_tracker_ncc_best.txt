@@ -1,0 +1,29 @@
+odometry_method = VisualOdometryRansac
+ransac_iters    = 1000
+use_weighting   = false
+use_deformation_field = false
+
+tracker         = StereoTracker
+max_disparity   = 200
+stereo_wsz      = 11
+ncc_threshold_s = 0.7
+
+tracker_mono    = TrackerBFM
+max_features    = 4096
+ncc_threshold_m = 0.8
+ncc_patch_size  = 11
+search_wsz      = 180
+
+detector  = FeatureDetectorHarrisCV
+harris_block_sz   = 3
+harris_filter_sz  = 1
+harris_k          = 0.04
+harris_thr        = 1e-07
+harris_margin     = 11
+
+use_bundle_adjustment   = false
+#use_bundle_adjustment   = true
+bundle_adjuster         = BundleAdjuster
+ba_num_frames           = 4
+ba_type                 = motion
+

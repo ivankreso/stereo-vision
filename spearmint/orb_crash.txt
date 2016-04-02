@@ -1,0 +1,8 @@
+Suggestion:     NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.191236    
+                num_levels    int        4           
+                max_dist_mon  int        20          
+                patch_size    int        31          
+                max_dist_ste  int        20      
+

@@ -1,0 +1,4 @@
+stereo_match.cpp:
+clang -lstdc++ -lopencv_core -lopencv_imgproc -lopencv_calib3d -lopencv_highgui -lopencv_contrib stereo_match.cpp -o stereo_match
+
+

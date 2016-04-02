@@ -1,0 +1,121 @@
+01:
+
+Minimum expected objective value under model is 2.86366 (+/- 0.00304), at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.145043    
+                num_levels    int        3           
+                max_dist_mon  int        68          
+                patch_size    int        11          
+                max_dist_ste  int        57          
+
+Minimum of observed values is 2.863657, at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.145043    
+                num_levels    int        3           
+                max_dist_mon  int        68          
+                patch_size    int        11          
+                max_dist_ste  int        57          
+
+Suggestion:     NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.055372    
+                num_levels    int        8           
+                max_dist_mon  int        67          
+                patch_size    int        11          
+                max_dist_ste  int        66          
+Submitted job 477 with local scheduler (process id: 4102).
+Status: 1 pending, 456 complete.
+
+
+
+
+02:
+
+Status: 1 pending, 67 complete.
+
+Fitting GP for main task...
+Getting suggestion...
+
+Minimum expected objective value under model is 1.38449 (+/- 0.00043), at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.152662    
+                num_levels    int        6           
+                max_dist_mon  int        35          
+                patch_size    int        31          
+                max_dist_ste  int        70          
+
+Minimum of observed values is 1.384483, at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.152662    
+                num_levels    int        6           
+                max_dist_mon  int        35          
+                patch_size    int        31          
+                max_dist_ste  int        70
+
+
+
+07 validation:
+NOISY - works worse:
+Minimum expected objective value under model is 1.35539 (+/- 0.02168), at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.147762    
+                num_levels    int        8           
+                max_dist_mon  int        20          
+                patch_size    int        31          
+                max_dist_ste  int        56          
+
+Minimum of observed values is 1.023316, at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.147514    
+                num_levels    int        8           
+                max_dist_mon  int        20          
+                patch_size    int        31          
+                max_dist_ste  int        56
+
+NOISELESS:
+Minimum expected objective value under model is 0.98591 (+/- 0.00069), at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.175005    
+                num_levels    int        6           
+                max_dist_mon  int        23          
+                patch_size    int        31          
+                max_dist_ste  int        47          
+
+Minimum of observed values is 0.985901, at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.175005    
+                num_levels    int        6           
+                max_dist_mon  int        23          
+                patch_size    int        31          
+                max_dist_ste  int        47
+
+
+
+06:
+Minimum expected objective value under model is 0.91926 (+/- 0.00047), at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.000138    
+                num_levels    int        4           
+                max_dist_mon  int        69          
+                patch_size    int        30          
+                max_dist_ste  int        50          
+
+Minimum of observed values is 0.919254, at location:
+                NAME          TYPE       VALUE
+                ----          ----       -----
+                scale_factor  float      1.000138    
+                num_levels    int        4           
+                max_dist_mon  int        69          
+                patch_size    int        30          
+                max_dist_ste  int        50
+
+

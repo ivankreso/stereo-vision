@@ -1,0 +1,72 @@
+#ifndef MONO_TRACKER_BFM_H_
+#define MONO_TRACKER_BFM_H_
+
+#include "tracker_base.h"
+#include "../detector/feature_detector_base.h"
+
+namespace track {
+
+class TrackerBFM : public TrackerBase {
+public:
+  TrackerBFM(FeatureDetectorBase& detector, int max_features, double min_crosscorr,
+             int patch_size, int window_size);
+
+  TrackerBFM(FeatureDetectorBase& detector, int max_features, double min_crosscorr,
+             int patch_size, int ws_left, int ws_right, int ws_up, int ws_down);
+
+  virtual int init(const core::Image& img);
+  virtual int track(const core::Image& img);
+  virtual int countTracked();
+  virtual int countFeatures();
+  virtual FeatureInfo feature(int i);
+
+  virtual void removeTrack(int i) { age_.at(i) = -1; }
+
+  virtual void config(std::string conf) {}
+  virtual std::string getConfig() {}
+  virtual std::string getConfigDocs() {}
+
+  virtual FeatureData getFeatureData(int i);
+
+  void printStats();
+
+private:
+  void matchFeatures(const core::Image& img_1, const core::Image& img_2,
+                     const std::vector<core::Point>& feats1,
+                     const std::vector<core::Point>& feats2,
+                     const std::vector<FeaturePatch>& patches1,
+                     const std::vector<FeaturePatch>& patches2,
+                     std::vector<int>& match_index, double dxl,
+                     double dxr, double dyu, double dyd,
+                     const std::vector<int>& ages, bool debug);
+
+  void updateMatches(const std::vector<core::Point>& feats,
+                     const std::vector<FeaturePatch>& patches,
+                     const std::vector<int>& match_index,
+                     std::vector<bool>& unused_features);
+
+  void replaceDeadFeatures(const std::vector<core::Point>& feats_c,
+                           const std::vector<FeaturePatch>& patches_c,
+                           std::vector<bool>& unused_features);
+
+  void copyPatches(core::Image& img, std::vector<core::Point>& features, std::vector<FeaturePatch>& patches);
+  std::vector<size_t> getSortedIndices(std::vector<double> const& values);
+  double getCorrelation(const FeaturePatch& p1, const FeaturePatch& p2);
+
+  bool use_smoothing_ = true;
+  FeatureDetectorBase& detector_;
+  core::Image img_p_, img_c_;
+  int max_feats_;
+  uint64_t age_acc_ = 0;
+  uint64_t death_count_ = 0;
+  double min_crosscorr_;
+  int wsize_left_, wsize_right_, wsize_up_, wsize_down_;
+  std::vector<core::Point> matches_p_, matches_c_;
+  std::vector<FeaturePatch> patches_p_, patches_c_;
+  std::vector<int> age_;
+  int cbw_, cbh_; // normalized correlation block width and height
+};
+
+}
+
+#endif

@@ -1,0 +1,144 @@
+#include "tracker_refiner_libviso.h"
+
+#include "../refiner/feature_refiner_klt.h"
+
+namespace track {
+
+TrackerRefinerLibviso::TrackerRefinerLibviso(StereoTrackerBase* tracker)
+                                             : tracker_(tracker)
+{
+}
+
+TrackerRefinerLibviso::~TrackerRefinerLibviso()
+{}
+
+void TrackerRefinerLibviso::init(core::Image& img_left, core::Image& img_right)
+{
+   tracker_->init(img_left, img_right);
+   imgset_left_.compute(img_left);
+   imgset_right_.compute(img_right);
+}
+
+void TrackerRefinerLibviso::track(core::Image& img_left, core::Image& img_right)
+{
+   tracker_->track(img_left, img_right);
+
+   int fcnt = tracker_->countFeatures();
+   points_lp_.resize(fcnt);
+   points_rp_.resize(fcnt);
+   points_lc_.resize(fcnt);
+   points_rc_.resize(fcnt);
+   age_.resize(fcnt);
+   std::map<int, core::Point> references;
+   std::map<int, core::Point> refined_right_prev, refined_left, refined_right;
+
+   for(int i = 0; i < fcnt; i++)
+   {
+      FeatureInfo f_left = tracker_->featureLeft(i);
+      FeatureInfo f_right = tracker_->featureRight(i);
+
+      assert(f_left.age_ >= 1);
+      age_[i] = f_left.age_;
+      points_lp_[i] = f_left.prev_;
+      points_rp_[i] = f_right.prev_;
+      points_lc_[i] = f_left.curr_;
+      points_rc_[i] = f_right.curr_;
+
+      references.insert(std::pair<int,core::Point>(i, f_left.prev_));
+
+      // add feature track points for refinement
+      refined_right_prev.insert(std::pair<int,core::Point>(i, f_right.prev_));
+      refined_left.insert(std::pair<int,core::Point>(i, f_left.curr_));
+      refined_right.insert(std::pair<int,core::Point>(i, f_right.curr_));
+   }
+
+
+   refiner::FeatureRefinerKLT refiner;
+   // add new track reference points to refiner using prev imgsets
+   refiner.addFeatures(imgset_left_, references);
+
+   // refine the points in prev right image
+   refiner.refineFeatures(imgset_right_, refined_right_prev);
+   // update current points positions
+   for(auto pt : refined_right_prev) {
+      core::Point rpt = refiner.getFeature(pt.first).pt();
+      auto status = refiner.getFeature(pt.first).status_;
+      if(status == 0)
+         points_rp_[pt.first] = rpt;
+      else {
+         age_[pt.first] = -1;
+      }
+   }
+
+   // compute new images
+   imgset_left_.compute(img_left);
+   // refine the points in current frames
+   refiner.refineFeatures(imgset_left_, refined_left);
+   // update current points positions
+   for(auto pt : refined_left) {
+      core::Point rpt = refiner.getFeature(pt.first).pt();
+      //std::cout << pt.first << " -> " << rpt << "\n";
+      auto status = refiner.getFeature(pt.first).status_;
+      if(status == 0)
+         points_lc_[pt.first] = rpt;
+      else {
+         age_[pt.first] = -1;
+      }
+   }
+   imgset_right_.compute(img_right);
+   refiner.refineFeatures(imgset_right_, refined_right);
+   for(auto pt : refined_right) {
+      core::Point rpt = refiner.getFeature(pt.first).pt();
+      //std::cout << pt.first << " -> " << rpt << "\n";
+      auto status = refiner.getFeature(pt.first).status_;
+      // if status == OK
+      if(status == 0)
+         points_rc_[pt.first] = rpt;
+      else {
+         age_[pt.first] = -1;
+      }
+   }
+}
+
+int TrackerRefinerLibviso::countFeatures() const
+{
+   return tracker_->countFeatures();
+}
+
+int TrackerRefinerLibviso::countActiveTracks() const
+{
+  int cnt = 0;
+  for(size_t i = 0; i < age_.size(); i++) {
+    if(age_[i] > 0)
+      cnt++;
+  }
+  return cnt;
+}
+
+FeatureInfo TrackerRefinerLibviso::featureLeft(int i) const
+{
+   FeatureInfo feat;
+   feat.prev_ = points_lp_[i];
+   feat.curr_ = points_lc_[i];
+   feat.age_ = age_[i];
+   feat.status_ = age_[i] + 1;
+   return std::move(feat);
+}
+
+FeatureInfo TrackerRefinerLibviso::featureRight(int i) const
+{
+   FeatureInfo feat;
+   feat.prev_ = points_rp_[i];
+   feat.curr_ = points_rc_[i];
+   feat.age_ = age_[i];
+   feat.status_ = age_[i] + 1;
+   return std::move(feat);
+}
+
+void TrackerRefinerLibviso::removeTrack(int id)
+{
+  age_[id] = -1;
+}
+
+
+}

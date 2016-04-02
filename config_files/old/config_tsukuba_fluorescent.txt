@@ -1,0 +1,7 @@
+camera_params  = /home/kivan/Projects/cv-stereo/config_files/camera_params_tsukuba.txt
+source_folder  = /home/kivan/Projects/datasets/Tsukuba/NewTsukubaStereoDataset/illumination/fluorescent/
+imglist        = /home/kivan/Projects/cv-stereo/config_files/tsukuba_fluorescent_crop_lst.xml
+groundtruth    = /home/kivan/Projects/cv-stereo/data/GT/Tsukuba/tsukuba_gt_crop.txt
+deformation_field   = /home/kivan/Projects/cv-stereo/build/learn_deformation_field/release/tsukuba_deformation_field_matrix.yml
+#deformation_field   = /home/kivan/Dropbox/experiment_data/tsukuba_deformation_field_matrix.ymlkad
+

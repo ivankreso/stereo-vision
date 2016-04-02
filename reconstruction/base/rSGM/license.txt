@@ -1,0 +1,6 @@
+License Information
+
+This software is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+The authors allow the downloaders of this package to use and modify the source code for their own research. Any commercial application, redistribution, etc. has to be arranged between users and authors individually.
+
+Please use the software provided in this package at your own risk. The executable is provided only for the purpose of evaluation of the algorithm presented in the paper "Large Scale Semi-Global Matching on the CPU" (IV 2014). The authors of the paper cannot be held responsible for any damages resulting from use of this software. There are no warranties associated with the code or executables.

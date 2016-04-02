@@ -1,0 +1,32 @@
+egomotion_method      = EgomotionRansac
+ransac_iters          = 1000
+ransac_threshold      = 1.5
+loss_function_type    = Squared
+use_weighting         = true
+use_deformation_field = false
+
+tracker         = StereoTracker
+max_disparity   = 160
+stereo_wsz      = 11
+ncc_threshold_s = 0.7
+estimate_subpixel = true
+
+tracker_mono    = TrackerBFM
+max_features    = 4096
+ncc_threshold_m = 0.8
+ncc_patch_size  = 15
+search_wsz      = 230
+
+detector          = FeatureDetectorUniform
+horizontal_bins   = 10
+vertical_bins     = 10
+features_per_bin  = 50
+harris_block_sz   = 3
+harris_filter_sz  = 1
+harris_k          = 0.04
+harris_thr        = 1e-07
+harris_margin     = 15
+
+use_bundle_adjustment   = false
+bundle_adjuster         = BundleAdjuster
+ba_num_frames           = 6

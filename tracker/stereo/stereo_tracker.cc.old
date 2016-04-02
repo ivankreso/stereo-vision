@@ -1,0 +1,222 @@
+#include "stereo_tracker.h"
+
+//#define DEBUG_ON
+
+namespace
+{
+
+void SmoothImage(core::Image& img, core::Image& img_smooth)
+{
+  cv::Mat cvimg_tmp, cvimg_smooth;
+  track::HelperOpencv::ImageToMat(img, cvimg_tmp);
+  //cv::imshow("img_nosmooth", cvimg_tmp);
+  cv::GaussianBlur(cvimg_tmp, cvimg_smooth, cv::Size(3,3), 0.7);
+  //cv::imshow("img_smooth", cvimg_smooth);
+  track::HelperOpencv::MatToImage(cvimg_smooth, img_smooth);
+}
+
+void DrawFeature(core::Point& pt, cv::Scalar& color, cv::Mat& img)
+{
+  cv::Point cvpt;
+  cvpt.x = pt.x_;
+  cvpt.y = pt.y_;
+  cv::circle(img, cvpt, 2, color, -1, 8);
+}
+
+}
+
+namespace track
+{
+
+StereoTracker::StereoTracker(TrackerBase& tracker, int max_disparity, int stereo_wsz,
+                             double ncc_thresh, bool estimate_subpixel) :
+                             tracker_(tracker), max_feats_(tracker.countFeatures()),
+                             max_disparity_(max_disparity), stereo_wsz_(stereo_wsz),
+                             ncc_thresh_(ncc_thresh), estimate_subpixel_(estimate_subpixel)
+{
+  pts_right_prev_.assign(max_feats_, core::Point(0,0));
+  pts_right_curr_.assign(max_feats_, core::Point(0,0));
+  pts_left_prev_.assign(max_feats_, core::Point(0,0));
+  pts_left_curr_.assign(max_feats_, core::Point(0,0));
+  age_.resize(max_feats_);
+  desc_rprev_ = cv::Mat::zeros(max_feats_, stereo_wsz*stereo_wsz, CV_8U);
+  desc_rcurr_ = cv::Mat::zeros(max_feats_, stereo_wsz*stereo_wsz, CV_8U);
+}
+
+void StereoTracker::init(const cv::Mat& img_left, const cv::Mat& img_right)
+{
+  //img_lc_ = img_left;
+  //img_rc_ = img_right;
+  cv::GaussianBlur(img_left, img_lc_, cv::Size(3,3), 0.7);
+  cv::GaussianBlur(img_right, img_rc_, cv::Size(3,3), 0.7);
+  //recon::StereoCosts::census_transform(img_right, stereo_wsz_, census_rcurr_);
+  recon::StereoCosts::compute_image_ncc_descriptors(img_rc_, stereo_wsz_, descriptors_rcurr_);
+
+  tracker_.init(img_lc_);
+}
+
+void StereoTracker::track(const cv::Mat& img_left, const cv::Mat& img_right)
+{
+  //img_lp_ = img_lc_.clone();
+  //img_rp_ = img_rc_.clone();
+  cv::swap(img_lp_, img_lc_);
+  cv::swap(img_rp_, img_rc_);
+
+  //img_lc_ = img_left;
+  //img_rc_ = img_right;
+  cv::GaussianBlur(img_left, img_lc_, cv::Size(3,3), 0.7);
+  cv::GaussianBlur(img_right, img_rc_, cv::Size(3,3), 0.7);
+  desc_rprev_ = desc_rcurr_.clone();
+
+  tracker_.track(img_lc_);
+
+  pts_left_prev_ = pts_left_curr_;
+  pts_right_prev_ = pts_right_curr_;
+  descriptors_rprev_ = descriptors_rcurr_;
+  // precompute the descriptors for all image pixels
+  //recon::StereoCosts::census_transform(img_right, stereo_wsz_, census_rcurr_);
+  recon::StereoCosts::compute_image_ncc_descriptors(img_rc_, stereo_wsz_, descriptors_rcurr_);
+  int margin_sz = (stereo_wsz_ - 1) / 2;
+  int desc_width = img_left.cols - 2*margin_sz;
+  int alive_before = tracker_.countTracked();
+
+  // TODO: this part kills Xeon Phi
+#ifndef DEBUG_ON
+  #pragma omp parallel for
+#endif
+  for(int i = 0; i < tracker_.countFeatures(); i++) {
+    bool debug = false;
+#ifdef DEBUG_ON
+    debug = true;
+#endif
+    //if (i == 273)
+    //  debug = true;
+    if (tracker_.isAlive(i)) {
+      bool ok = false;
+      //uint32_t census;
+      core::DescriptorNCC ncc_desc;
+      FeatureInfo left_feat = tracker_.feature(i);
+      // if new feature we need to find disparity for both frames
+      if (left_feat.age_ == 1) {
+        // census is to robust...
+        //census = recon::StereoCosts::census_transform_point(left_feat.prev_, img_lp_, stereo_wsz_);
+        //ok = stereo_match_census(max_disparity_, margin_sz, census, census_rprev_,
+        //                         left_feat.prev_, pts_right_prev_[i]);
+        // NCC
+        //bugged with 1toN
+        if(debug) {
+          std::cout << "Prev frame:\n";
+          HelperOpencv::DrawPoint(left_feat.prev_, img_lp_, "left_point");
+        }
+        recon::StereoCosts::compute_ncc_descriptor(img_lp_, left_feat.prev_, stereo_wsz_, ncc_desc);
+        ok = stereo_match_ncc(max_disparity_, margin_sz, ncc_desc, descriptors_rprev_, desc_rprev_.row(i),
+                              desc_width, left_feat.prev_, img_rp_, debug, pts_right_prev_[i]);
+        if(!ok) {
+          tracker_.removeTrack(i);
+          age_[i] = -1;
+          continue;
+        }
+      }
+      // find disparity for new frame
+      //census = recon::StereoCosts::census_transform_point(left_feat.curr_, img_lc_, stereo_wsz_);
+      //ok = stereo_match_census(max_disparity_, margin_sz, census, census_rcurr_,
+      //                         left_feat.curr_, pts_right_curr_[i]);
+
+      // NCC
+      //HelperOpencv::DrawPoint(left_feat.curr_, img_lc_, "left_point");
+      if(debug) {
+        std::cout << "Current frame:\n";
+        HelperOpencv::DrawPoint(left_feat.curr_, img_lc_, "left_point");
+      }
+      recon::StereoCosts::compute_ncc_descriptor(img_lc_, left_feat.curr_, stereo_wsz_, ncc_desc);
+      ok = stereo_match_ncc(max_disparity_, margin_sz, ncc_desc, descriptors_rcurr_, desc_rcurr_.row(i),
+                            desc_width, left_feat.curr_, img_rc_, debug, pts_right_curr_[i]);
+      if(!ok) {
+        tracker_.removeTrack(i);
+        age_[i] = -1;
+      }
+      // if ok pull the left tracker data
+      else {
+        pts_left_prev_[i] = left_feat.prev_;
+        pts_left_curr_[i] = left_feat.curr_;
+        age_[i] = left_feat.age_;
+      }
+    }
+  }
+
+  std::cout << "[StereoTracker]: Matched = " << countActiveTracks() << " / " << alive_before << "\n";
+}
+
+int StereoTracker::countFeatures() const
+{
+   return max_feats_;
+}
+
+int StereoTracker::countActiveTracks() const
+{
+  int cnt = 0;
+  for(int i = 0; i < max_feats_; i++) {
+    if(age_[i] > 0)
+      cnt++;
+  }
+  return cnt;
+}
+
+FeatureInfo StereoTracker::featureLeft(int i) const
+{
+  FeatureInfo feat;
+  feat.prev_ = pts_left_prev_[i];
+  feat.curr_ = pts_left_curr_[i];
+  feat.age_ = age_[i];
+  return feat;
+}
+
+FeatureInfo StereoTracker::featureRight(int i) const
+{
+  FeatureInfo feat;
+  feat.prev_ = pts_right_prev_[i];
+  feat.curr_ = pts_right_curr_[i];
+  feat.age_ = age_[i];
+  return feat;
+}
+
+
+void StereoTracker::removeTrack(int id)
+{
+  //if(age_[id] > 0) {
+  //  age_acc_ += age_[id];
+  //  death_count_++;
+  //}
+  age_[id] = -1;
+  tracker_.removeTrack(id);
+}
+
+void StereoTracker::showTrack(int i) const
+{
+  cv::Mat img_lp, img_lc, img_rp, img_rc;
+  cv::cvtColor(img_lp_, img_lp, cv::COLOR_GRAY2RGB);
+  cv::cvtColor(img_lc_, img_lc, cv::COLOR_GRAY2RGB);
+  cv::cvtColor(img_rp_, img_rp, cv::COLOR_GRAY2RGB);
+  cv::cvtColor(img_rc_, img_rc, cv::COLOR_GRAY2RGB);
+  FeatureInfo feat_left = featureLeft(i);
+  FeatureInfo feat_right = featureRight(i);
+  if(feat_left.age_ <= 0) throw "Error\n";
+  cv::Scalar color(0,255,0);
+  DrawFeature(feat_left.prev_, color, img_lp);
+  DrawFeature(feat_left.curr_, color, img_lc);
+  DrawFeature(feat_right.prev_, color, img_rp);
+  DrawFeature(feat_right.curr_, color, img_rc);
+
+  double ssz = 1.6;
+  cv::resize(img_lp, img_lp, cv::Size(), ssz, ssz);
+  cv::resize(img_rp, img_rp, cv::Size(), ssz, ssz);
+  cv::resize(img_lc, img_lc, cv::Size(), ssz, ssz);
+  cv::resize(img_rc, img_rc, cv::Size(), ssz, ssz);
+  cv::imshow("left_prev", img_lp);
+  cv::imshow("left_curr", img_lc);
+  cv::imshow("right_prev", img_rp);
+  cv::imshow("right_curr", img_rc);
+  cv::waitKey(0);
+}
+
+}

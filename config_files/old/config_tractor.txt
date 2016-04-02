@@ -1,0 +1,4 @@
+source_folder     = /home/kivan/Projects/datasets/TUGraz/sequence/
+imglist           = /home/kivan/Projects/cv-stereo/config_files/tractor_lst.xml
+disp_folder       = /home/kivan/Projects/datasets/TUGraz/dense_stereo/
+

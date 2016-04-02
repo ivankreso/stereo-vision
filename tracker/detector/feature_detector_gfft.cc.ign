@@ -1,0 +1,124 @@
+#include "feature_detector_gftt.h"
+#include "../base/helper_opencv.h"
+
+namespace {
+
+struct greaterThanPtr : public std::binary_function<const float*, const float*, bool>
+{
+    bool operator () (const float* a, const float* b) const
+    { return *a > *b; }
+};
+
+}
+
+namespace track {
+
+using namespace std;
+using namespace cv;
+
+FeatureDetectorGFTT::FeatureDetectorGFTT(int block_size, int ksize, double eig_thr, 
+                                         int margin_size, int max_corners)
+{
+  block_size_ = block_size;
+  ksize_ = ksize;
+  eig_thr_ = eig_thr;
+  margin_size_ = margin_size;
+  max_corners_ = max_corners;
+}
+
+void FeatureDetectorGFTT::detect(const cv::Mat& img, std::vector<core::Point>& features)
+{
+  features.clear();
+  //Mat eig = Mat::zeros(img.rows_, img.cols_, CV_32FC1);
+  Mat eig, img_dilate;
+  cv::cornerMinEigenVal(img, eig, block_size_, 3);
+  //threshold(eig, threshed, 0.0001, 255, THRESH_BINARY_INV); // just for visualisation
+
+  threshold(eig, eig, eig_thr_, 0, THRESH_TOZERO);
+  //cv::Mat struct_element = getStructuringElement(MORPH_RECT, cv::Size(block_size_, block_size_));
+  // used for non-max supression
+  //dilate(eig, img_dilate, struct_element);
+  dilate(eig, img_dilate, cv::Mat());
+  //dilate(eig, img_dilate, Mat());          // default block size - 3x3
+  //std::cout << eig << "\n\n\n";
+  //std::cout << img_dilate << "\n\n\n";
+
+  Size imgsize = img.size();
+  std::vector<const float*> tmpCorners;
+  // collect list of pointers to features - put them into temporary image
+  int marsz;
+  if(margin_size_ > 0)
+    marsz = margin_size_;
+  else
+    marsz = 1;
+
+  for(int y = marsz; y < imgsize.height - marsz; y++)
+  {
+    const float* eig_data = (const float*)eig.ptr(y);
+    const float* tmp_data = (const float*)img_dilate.ptr(y);
+
+    for(int x = marsz; x < (imgsize.width - marsz); x++)
+    {
+      float val = eig_data[x];
+      // supress the non-max area
+      // in this case it is safe to compare floats directly for performance reasons
+      if(val != 0 && val == tmp_data[x]) {
+        //std::cout << val << " -- " << *(eig_data+x) << "\n";
+        tmpCorners.push_back(eig_data + x);
+      }
+    }
+  }
+
+  // sort corners by response - best first
+  std::sort(tmpCorners.begin(), tmpCorners.end(), greaterThanPtr());
+
+  int total = tmpCorners.size(), ncorners = 0;
+  for(int i = 0; i < total; i++)
+  {
+    int ofs = (int)((const uchar*)tmpCorners[i] - eig.data);
+    int y = (int)(ofs / eig.step);
+    int x = (int)((ofs - y*eig.step)/sizeof(float));
+
+    features.push_back(core::Point((double)x, (double)y));
+    ++ncorners;
+    if(max_corners_ > 0 && (int)ncorners == max_corners_)
+      break;
+  }
+
+  std::cout << "Detected features = " << features.size() << "\n";
+  //for(size_t i = 0; i < features.size(); i++) {
+  //  if(*tmpCorners[i] > 0.001) continue;
+  //  std::cout << i << " - " << features[i]  << " - response = " << *tmpCorners[i] << "\n";
+  //  HelperOpencv::DrawPatch(features[i], img, 21);
+  //  cv::waitKey(0);
+  //}
+
+  //std::vector<cv::Point2f> subpix_corners;
+  //track::HelperOpencv::PointsToCvPoints(features, subpix_corners);
+  //cornerSubPix(img, subpix_corners, (11,11),(-1,-1),(cv.CV_TERMCRIT_ITER | cv.CV_TERMCRIT_EPS, 10, 0.01));
+
+  // no good - only for chessboard type corners
+  // Set the neeed parameters to find the refined corners
+  //Size winSize = Size(5, 5);
+  //Size zeroZone = Size(-1, -1);
+  //TermCriteria criteria = TermCriteria(CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 40, 0.001);
+  ///// Calculate the refined corner locations
+  //cornerSubPix(img, subpix_corners, winSize, zeroZone, criteria);
+  //
+  //for(size_t i = 0; i < features.size(); i++)
+  //  std::cout << features[i] << " -> " << subpix_corners[i] << "\n";
+
+  //for(size_t i = 0; i < features.size(); i++)
+  //  std::cout << features[i] << " -> " << *tmpCorners[i] << "\n";
+
+  //cv::Mat disp_img = img;
+  //cvtColor(img, disp_img, COLOR_GRAY2RGB);
+  //vo::FeatureHelper::drawFeatures(features, img);
+  //std::cout << "Harris detected: " << features.size() << "\n";
+  ////cout << eig << endl;
+  ////imshow("Harris response", eig);
+  ////imshow("Harris response dilate", img_dilate);
+  //waitKey(0);
+}
+
+}

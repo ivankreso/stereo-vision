@@ -1,0 +1,28 @@
+output_folder   = ./results/tracker_ncc_tsukuba_1/
+odometry_method = libviso
+ransac_iters    = 1000
+libviso_weighting = false
+
+tracker         = StereoTracker
+max_disparity   = 200
+stereo_wsz      = 15
+ncc_threshold_s = 0.8
+
+tracker_mono    = TrackerBFM
+max_features    = 4096
+ncc_threshold_m = 0.8
+ncc_patch_size  = 15
+search_wsz      = 160
+
+detector  = FeatureDetectorHarrisCV
+harris_block_sz   = 5
+harris_filter_sz  = 3
+harris_k          = 0.04
+harris_thr        = 0.00000001
+harris_margin     = 15
+
+use_bundle_adjustment   = true
+ba_window_size          = 2
+ba_type                 = motion
+ba_use_weighting         = false
+

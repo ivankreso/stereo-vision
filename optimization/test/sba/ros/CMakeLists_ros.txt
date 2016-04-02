@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 2.8)
+set(CMAKE_CXX_FLAGS "-std=c++11 -march=corei7")
+
+add_definitions(-DSBA_CHOLMOD)
+include_directories(/usr/include/eigen3/)
+#include_directories(../../sba/stereo/extern/ros_sba/include/)
+
+#link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../sba/extern/ros_sba/build/release)
+link_directories(/home/kivan/Projects/vista-stereo/build/lib/ros_sba/debug/)
+
+#file(GLOB SRC_LIST *.cc *.c)
+set(SRC_LIST sba_test.cc)
+message(STATUS "${SRC_LIST}")
+
+add_executable(sba_test ${SRC_LIST})
+target_link_libraries(sba_test sba)
+

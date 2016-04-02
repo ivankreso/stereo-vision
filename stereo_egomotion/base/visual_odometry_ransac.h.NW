@@ -1,0 +1,112 @@
+#ifndef STEREO_ODOMETRY_BASE_VISUAL_ODOMETRY_RANSAC_H_
+#define STEREO_ODOMETRY_BASE_VISUAL_ODOMETRY_RANSAC_H_
+
+#include "visual_odometry_base.h"
+#include "../../tracker/stereo/stereo_tracker_base.h"
+
+namespace visodom
+{
+
+class VisualOdometryRansac : public VisualOdometryBase {
+ public:
+  // camera parameters (all are mandatory / need to be supplied)
+  struct calibration {  
+    double f;  // focal length (in pixels)
+    double cu; // principal point (u-coordinate)
+    double cv; // principal point (v-coordinate)
+    calibration () {
+      f  = 1;
+      cu = 0;
+      cv = 0;
+    }
+  };
+  // general parameters
+  struct parameters {
+    calibration calib;            // camera calibration parameters
+    // stereo-specific parameters (mandatory: base)
+    double  base;             // baseline (meters)
+    int32_t ransac_iters;     // number of RANSAC iterations
+    double  inlier_threshold; // fundamental matrix inlier threshold
+    bool    reweighting;      // lower border weights (more robust to calibration errors)
+    parameters () {
+      base             = 1.0;
+      ransac_iters     = 200;
+      inlier_threshold = 1.5;
+      reweighting      = true;
+    }
+  };
+  // structure for storing matches
+  struct StereoMatch {
+    float u1p, v1p; // u,v-coordinates in previous left  image
+    float u2p, v2p; // u,v-coordinates in previous right image
+    float u1c, v1c; // u,v-coordinates in current  left  image
+    float u2c, v2c; // u,v-coordinates in current  right image
+    StereoMatch() {}
+    StereoMatch(float u1p, float v1p, float u2p, float v2p,
+                float u1c, float v1c, float u2c, float v2c):
+                u1p(u1p), v1p(v1p), u2p(u2p), v2p(v2p),
+                u1c(u1c), v1c(v1c), u2c(u2c), v2c(v2c) {}
+  };
+
+  // constructor, takes as inpute a parameter structure
+  VisualOdometryRansac(parameters params) : params_(params) {}
+
+  virtual cv::Mat getMotion(track::StereoTrackerBase& tracker);
+  virtual std::vector<int> getTrackerInliers() { return tracker_inliers_; }
+  virtual std::vector<int> getTrackerOutliers() { return tracker_outliers_; }
+  std::vector<double> estimateMotion(std::vector<StereoMatch>& tracks);
+
+  // ADDED
+  void setLeftPrevImage(const cv::Mat& img) { img.copyTo(img_left_prev_); }
+
+  // parameters
+  parameters params_;
+
+private:
+  enum ResultState { UPDATED, FAILED, CONVERGED };  
+
+  ResultState updateParameters(double* p_observe,
+                               double* p_predict,
+                               double* p_residual,
+                               double* J,
+                               std::vector<StereoMatch> &tracks,
+                               std::vector<int32_t>& active,
+                               std::vector<double>& tr,
+                               double step_size, double eps);
+
+  void computeObservations(double* p_observe,
+                           std::vector<StereoMatch>& tracks,
+                           std::vector<int> &active);
+
+  void computeResidualsAndJacobian(double* p_observe,
+                                   double* p_predict,
+                                   double* p_residual,
+                                   double* J,
+                                   std::vector<double>& tr,
+                                   std::vector<int>& active);
+
+
+  std::vector<int> getInliers(double* p_observe,
+                              double* p_predict,
+                              double* p_residual,
+                              double* J,
+                              std::vector<StereoMatch> &tracks,
+                              std::vector<double> &tr,
+                              std::vector<int>& active);
+
+  void updateTrackerInliers(const std::vector<int>& active_tracks);
+
+  double *X, *Y, *Z = nullptr;            // 3d points
+
+  std::vector<int> inliers_;            // ransac inlier set
+  std::vector<int> tracker_inliers_;    // tracker inlier set
+  std::vector<int> tracker_outliers_;
+
+  // ADDED
+  cv::Mat img_left_prev_;
+};
+
+}
+
+#endif
+

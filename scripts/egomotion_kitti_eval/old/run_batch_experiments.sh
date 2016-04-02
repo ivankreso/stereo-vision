@@ -1,0 +1,21 @@
+#!/bin/bash
+
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_1.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_2.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_3.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_ba_2.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_stm_1.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_1.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_2.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_3.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_4.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_5.txt"
+#./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_ba_1.txt"
+
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_stm_4_1.txt"
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_stm_4_2.txt"
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_stm_4_3.txt"
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_8.txt"
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_freak_9.txt"
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_8.txt"
+./run_kitti_evaluation.sh "../../../config_files/experiments/tracker_ncc_9.txt"

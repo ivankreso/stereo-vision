@@ -1,0 +1,354 @@
+#include "feature_filter.h"
+
+
+// Function adds new features instead of dead ones.
+// Uses mask to ignore areas already filled with features.
+// Dead features are the ones which disappeared from scene and their status is 0.
+int FeatureFilter::addNewFeatures(Mat& img, vector<KeyPoint>& features, vector<uchar>& status,
+      GoodFeaturesToTrackDetector& detector, Mat& init_mask)
+{
+   bool have_bad_features = false;
+   for(unsigned i = 0; i < status.size(); i++) {
+      if(status[i] == 0) {
+         have_bad_features = true;
+         break;
+      }
+   }
+   if(!have_bad_features)
+      return 0;
+   int added = 0;
+   const int filter_size = 0; // TODO
+   //Mat mask = Mat::ones(img.rows, img.cols, CV_8U);
+   Mat mask(init_mask);
+   for(unsigned i = 0; i < status.size(); i++) {
+      if(status[i] == 1) {
+         int x = round(features[i].pt.x);
+         int y = round(features[i].pt.y);
+         mask.at<char>(y,x) = 0;
+         for(int j = -filter_size; j <= filter_size; j++) {
+            for(int k = -filter_size; k <= filter_size; k++) {
+               if((y+j) > 0 && (y+j) < mask.rows && (x+k) > 0 && (x+k) < mask.cols)
+                  mask.at<char>(y+j,x+k) = 0;
+            }
+         }
+      }
+   }
+
+   vector<KeyPoint> features_new;
+   detector.detect(img, features_new, mask);
+   Size imgsize(img.cols, img.rows);
+   KeyPointsFilter::runByImageBorder(features_new, imgsize, BORDER_FILTER);
+   //KeyPointsFilter::removeDuplicated(features_new);
+
+   uint32_t cnt = 0;
+   for(size_t i = 0; i < status.size(); i++) {
+      if(status[i] == 0) {
+         if(cnt == features_new.size()) {
+            cerr << "no more features" << endl;
+            // TODO dont track dead features...
+            features[i].pt.x = -500;
+            features[i].pt.y = -500;
+            continue;
+            //exit(-1);
+         }
+         //cout << "old : " << features[i].response << endl;
+         features[i] = features_new[cnt];
+         added++;
+         //cout << "new: " << features[i].response << endl;
+         cnt++;
+      }
+   }
+   return added;
+}
+
+
+// Function filters features uniformly selecting in blocks with max limit
+void FeatureFilter::filterFeatures(vector<KeyPoint>& features, vector<KeyPoint>& filtered_features, vector<int>& blocks, 
+      int max_features, double block_width, double block_height, Size img_size)
+{
+   int cols = (img_size.width / block_width);
+   int rows = (img_size.height / block_height);
+   cout << rows << " -- " << cols << endl;
+
+   double block_w = (double)img_size.width / cols;
+   double block_h = (double)img_size.height / rows;
+
+   blocks.resize(rows * cols);
+   std::fill(blocks.begin(), blocks.end(), 0);
+
+   int r, c;
+   for(unsigned i = 0; i < features.size(); i++) {
+      c = (int)features[i].pt.x / block_w;
+      r = (int)features[i].pt.y / block_h;
+
+      if(blocks[r*cols+c] <= max_features) {
+         filtered_features.push_back(features[i]);
+         blocks[r*cols+c]++;
+      }
+   }
+}
+
+// Adds new features uniformly only in those blocks where the number of features
+// has dropped below max number of them.
+void FeatureFilter::addNewFeatures(Mat& img, vector<KeyPoint>& features, vector<uchar>& status, int max_features, 
+      int block_width, int block_height, GoodFeaturesToTrackDetector& detector)
+{
+   // check how many are not matched in status
+   // determine if we need to add new ones
+   // add new features in places of unmatched ones and write -1 for them in correspondance vector
+   // hint - maybe we should divide the image in blocks and then search for new features only in those blocks where we lost them
+
+   vector<int> dead_features;
+   vector<int> blocks;
+
+   int cols = (img.cols / block_width);
+   int rows = (img.rows / block_height);
+   double block_w = (double)img.cols / cols;
+   double block_h = (double)img.rows / rows;
+
+   int c, r;
+   blocks.resize(rows * cols);
+   std::fill(blocks.begin(), blocks.end(), 0);
+   // determine dead features and refresh image blocks with remaining alive features
+   for(unsigned i = 0; i < status.size(); i++) {
+      if(status[i] == 0)
+         dead_features.push_back(i);
+      else {
+         c = (int)features[i].pt.x / block_w;
+         r = (int)features[i].pt.y / block_h;
+         blocks[r*cols+c]++;
+      }
+   }
+
+   vector<KeyPoint> features_new;
+   vector<int> not_added;
+   detector.detect(img, features_new);
+   unsigned d = 0;
+   for(unsigned i = 0; i < features_new.size(); i++) {
+      c = (int)features_new[i].pt.x / block_w;
+      r = (int)features_new[i].pt.y / block_h;
+
+      if(blocks[r*cols+c] < max_features) {
+         if(d < dead_features.size()) {
+            features[dead_features[d]] = features_new[i];
+            d++;
+         }
+         else
+            features.push_back(features_new[i]);
+         //break;
+
+         //			Mat first;
+         //			drawKeypoints(img, features_new, first, Scalar::all(-1), DrawMatchesFlags::DEFAULT);
+         //			imshow("First", first);
+         //			waitKey(0);
+         //			//destroyWindow("First");
+      }
+      else {
+         not_added.push_back(i);
+      }
+   }
+   KeyPointsFilter::removeDuplicated(features);
+   unsigned n = 0;
+   // in case when some of dead features are in areas where not enough new features were detected to replace them:
+   // we are going to replace that dead features with some of those detected which were not added in previous step
+   cout << "feats new size: " << features_new.size() << "\nfeatures not added: " << not_added.size() << "\n" 
+      << "dead replaced so far: " << d << "\ndead features in total: " << dead_features.size() << endl;
+   while(d < dead_features.size()) {
+      assert(n < not_added.size());
+      features[dead_features[d]] = features_new[not_added[n]];
+      n++; d++;
+   }
+   assert(d >= dead_features.size());
+   //features_new.clear();
+}
+
+//void FeatureFilter::cleanMatches(vector<KeyPoint>& feat_left, vector<KeyPoint>& feat_right, vector<uchar>& status,
+//				 vector<KeyPoint>& fleft_out, vector<KeyPoint>& fright_out)
+//{
+//   assert(feat_left.size() == feat_right.size() && feat_left.size() = status.size());
+//   fleft_out.clear();
+//   fright_out.clear();
+//
+//   for(size_t i = 0; i < feat_left.size(); i++) {}
+//}
+
+
+// Function adds new features instead of dead ones.
+// Dead features are the ones which disappeared from scene and their status is 0.
+void FeatureFilter::addNewFeaturesWithDuplicates(Mat& img, vector<KeyPoint>& features, vector<uchar>& status,
+      GoodFeaturesToTrackDetector& detector)
+{
+   vector<KeyPoint> features_new;
+   detector.detect(img, features_new);
+   Size imgsize(img.cols, img.rows);
+   KeyPointsFilter::runByImageBorder(features_new, imgsize, BORDER_FILTER);
+   KeyPointsFilter::removeDuplicated(features_new);
+
+   unsigned cnt = 0;
+   for(unsigned i = 0; i < status.size(); i++) {
+      if(status[i] == 0) {
+         if(cnt == features_new.size()) {
+            cerr << "no more features" << endl;
+            exit(-1);
+         }
+         //cout << "old : " << features[i].response << endl;
+         features[i] = features_new[cnt];
+         //cout << "new: " << features[i].response << endl;
+         cnt++;
+      }
+   }
+}
+
+
+void FeatureFilter::createBorderMask(int rows, int cols, int mask_size, Mat& mask)
+{
+   assert(rows > 0 && cols > 0 && mask_size < (cols/2));
+   mask = Mat::ones(rows, cols, CV_8U);
+
+   for(int i = 0; i < mask.rows; i++) {
+      for(int j = 0; j < mask.cols; j++) {
+         if(j < mask_size || j >= (cols-mask_size))
+            mask.at<char>(i,j) = 0;
+      }
+   }
+}
+
+// function draws optical flow ie. coresponding features
+void FeatureFilter::drawOpticalFlow(Mat& img, const vector<KeyPoint>& points_prev, const vector<KeyPoint>& points_next,
+      const vector<uchar>& track_status, const Scalar& color)
+{
+   Point pt1, pt2;
+   assert(points_prev.size() == points_next.size());
+   for(size_t i = 0; i < points_prev.size(); i++) {
+      if(track_status[i] == 1) {
+         pt1.x = points_prev[i].pt.x;
+         pt1.y = points_prev[i].pt.y;
+         pt2.x = points_next[i].pt.x;
+         pt2.y = points_next[i].pt.y;
+         line(img, pt1, pt2, color, 2, 8);
+         circle(img, pt1, 2, Scalar(255, 0, 0), -1, 8);
+      }
+   }
+}
+
+
+// Function creates a mask for detection in only one block with index i
+void FeatureFilter::createMask(Mat& mask, int i, int block_rows, int block_cols)
+{
+   mask = Mat::zeros(mask.rows, mask.cols, mask.type());
+
+   int block_w = (mask.cols / block_cols);
+   int block_h = (mask.rows / block_rows);
+   int r = (i / block_cols) * block_h;
+   int c = (i % block_cols) * block_w;
+
+   for(int j = r; j < (r+block_h); j++) {
+      for(int k = c; k < (c+block_w); k++) {
+         if(j >= mask.rows || k >= mask.cols)
+            continue;
+         mask.data[j*mask.cols + k] = 1;
+         //cout << j << " - " << k << endl;
+         //assert(j < mask.rows && k < mask.cols);
+         //cout << (int)mask.data[j*mask.cols + k] << endl;
+      }
+   }
+}
+
+// Function filters features uniformly selecting in blocks with max limit with separated detection in each block which
+// is bad for now
+void FeatureFilter::addNewFeatures(Mat& img, vector<KeyPoint>& features, vector<uchar>& status, vector<int>& blocks,
+      int max_features, int block_width, int block_height, GoodFeaturesToTrackDetector& detector,
+      GoodFeaturesToTrackDetector detector_full)
+{
+   // check how many are not matched in status
+   // determine if we need to add new ones
+   // add new features in places of unmatched ones and write -1 for them in correspondance vector
+   // hint - maybe we should divide the image in blocks and then search for new features only in those blocks where we lost them
+
+   vector<int> dead_features;
+
+   int cols = (img.cols / block_width);
+   int rows = (img.rows / block_height);
+   double block_w = (double)img.cols / cols;
+   double block_h = (double)img.rows / rows;
+
+   int c, r;
+   std::fill(blocks.begin(), blocks.end(), 0);
+   // determine dead features and refresh image blocks with remaining alive features
+   for(unsigned i = 0; i < status.size(); i++) {
+      if(status[i] == 0)
+         dead_features.push_back(i);
+      else {
+         c = (int)features[i].pt.x / block_w;
+         r = (int)features[i].pt.y / block_h;
+         blocks[r*cols+c]++;
+      }
+   }
+
+   vector<KeyPoint> features_new;
+   Mat mask(img.rows, img.cols, CV_8U);
+   unsigned d = 0;
+   for(unsigned i = 0; i < blocks.size(); i++) {
+      if(blocks[i] < max_features) {
+         createMask(mask, i, rows, cols);
+         detector.detect(img, features_new, mask);
+
+         //			Mat first;
+         //			drawKeypoints(img, features_new, first, Scalar::all(-1), DrawMatchesFlags::DEFAULT);
+         //			imshow("First", first);
+         //			waitKey(0);
+         //			//destroyWindow("First");
+
+         for(unsigned j = 0; j < features_new.size(); j++) {
+            if(d < dead_features.size()) {
+               features[dead_features[d]] = features_new[j];
+               d++;
+            }
+            else {
+               //features.push_back(features_new[i]);
+               break;
+            }
+            blocks[i]++;
+            if(blocks[i] == max_features)
+               break;
+         }
+         features_new.clear();
+      }
+   }
+   // ako je ostalo jos mrtvih znacajki nepokrivenih dodaj random nove iz cijele slike...
+   if(d < dead_features.size()) {
+      detector_full.detect(img, features_new);
+      for(unsigned i = 0; i < features_new.size(); i++) {
+         features[dead_features[d]] = features_new[i];
+         d++;
+         if(d == dead_features.size())
+            break;
+      }
+      if(d < dead_features.size()) {
+         cerr << "error: dead features not replaced" << endl;
+      }
+   }
+}
+
+
+
+// Function returns best n features
+vector<KeyPoint>&& FeatureFilter::filterFeatures(vector<KeyPoint>& features, unsigned n)
+{
+   vector<KeyPoint> filtered_features(n);
+   for(unsigned i = 0; i < features.size(); i++) {
+      filtered_features.push_back(move(features[i]));
+   }
+   return move(filtered_features);
+}
+
+
+void FeatureFilter::checkStatus(vector<uchar>& status) {
+   for(unsigned i = 0; i < status.size(); i++) {
+      if(status[i] == 0) {
+         cerr << "error: didn't match all features" << endl;
+         exit(-1);
+      }
+   }
+}
+

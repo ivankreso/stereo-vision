@@ -1,0 +1,187 @@
+#ifndef OPTIMIZATION_BUNDLE_ADJUSTMENT_SOLVER_H_
+#define OPTIMIZATION_BUNDLE_ADJUSTMENT_SOLVER_H_
+
+#include <vector>
+#include <cmath>
+#include <array>
+
+#include <opencv2/core/core.hpp>
+#include <ceres/ceres.h>
+#include <ceres/rotation.h>
+
+#include "../../core/types.h"
+
+namespace optim {
+
+struct TrackData
+{
+  int dist_from_cframe;
+  std::vector<core::Point> left_tracks;
+  std::vector<core::Point> right_tracks;
+};
+
+class BundleAdjustmentSolver
+{
+ public:
+  BundleAdjustmentSolver();
+  void SetCameraIntrinsics(const cv::Mat& cam_intrinsics);
+  void AddCameraMotion(const cv::Mat& Rt);
+  void AddTrackData(const TrackData& data);
+  void Solve();
+  // get camera extrinsic transform from cam local coord to world coord (1-frame coord)
+  cv::Mat GetCameraParams(int ci) const;
+
+ private:
+  ceres::Problem ceres_problem_;  
+  cv::Mat cam_intr_;
+  std::vector<std::array<double,3>> cam_translation_;
+  std::vector<std::array<double,3>> cam_rotation_;
+  double *trans_params_, *rot_params_;
+
+  std::vector<cv::Mat> pts3d_;
+  std::vector<double> weights_;
+  std::map<std::pair<int,int>, std::pair<core::Point,core::Point>> projs_;
+  std::map<std::pair<int,int>, core::Point> mono_projs_;
+};
+
+namespace
+{
+
+template <typename T>
+void Transform3DPoint(
+  const T* const cam_trans,
+  const T* const cam_rot,
+  const T* const pt3d,
+  T* trans_pt3d)
+{
+  // Apply the angle-axis camera rotation
+  ceres::AngleAxisRotatePoint(cam_rot, pt3d, trans_pt3d);
+  // Apply the camera translation
+  trans_pt3d[0] += cam_trans[0];
+  trans_pt3d[1] += cam_trans[1];
+  trans_pt3d[2] += cam_trans[2];
+}
+
+template <typename T>
+void ComputeStereoResiduals(T* pos_proj,
+                            const double weight,
+                            const double* const cam_intr,
+                            const double* const left_point,
+                            const double* const right_point,
+                            T* out_residuals)
+{
+
+  T fx = T(cam_intr[0]);
+  T fy = T(cam_intr[1]);
+  T cx = T(cam_intr[2]);
+  T cy = T(cam_intr[3]);
+  T b = T(cam_intr[4]);
+
+  // Transform the point from homogeneous to euclidean
+  T xe = pos_proj[0] / pos_proj[2];   // x / z
+  T ye = pos_proj[1] / pos_proj[2];   // y / z
+
+  //// Apply the focal length
+  //const T& focal = cam_f[0];
+  T predicted_x_left = fx * xe + cx;
+  T predicted_y_left = fy * ye + cy;
+  //std::cout << predicted_x_left << " -- " << predicted_y_left << "\n";
+  //std::cout << cam_intr << "\n";
+
+  // now for right camera
+  // first move point in right cam coord system
+  pos_proj[0] -= b;
+  xe = pos_proj[0] / pos_proj[2];   // x / z
+  ye = pos_proj[1] / pos_proj[2];   // y / z
+  T predicted_x_right = fx * xe + cx;
+  T predicted_y_right = fy * ye + cy;
+
+  //double cp_x = cam_intr[2];
+  //double w = 1.0/(std::fabs(left_2dpoint[0] - cp_x)/std::fabs(cp_x) + 0.05);
+  T w = T(weight); // Compute and return the error is the difference between the predicted and observed position
+  out_residuals[0] = w * (predicted_x_left - T(left_point[0]));
+  out_residuals[1] = w * (predicted_y_left - T(left_point[1]));
+  out_residuals[2] = w * (predicted_x_right - T(right_point[0]));
+  out_residuals[3] = w * (predicted_y_right - T(right_point[1]));
+}
+
+struct ReprojErrorStereo
+{
+  ReprojErrorStereo(const cv::Mat& pt3d, const core::Point& left_pt, const core::Point& right_pt,
+                    const cv::Mat& cam_intr, const double weight)
+  {
+    left_pt_[0] = left_pt.x_;
+    left_pt_[1] = left_pt.y_;
+    right_pt_[0] = right_pt.x_;
+    right_pt_[1] = right_pt.y_;
+    weight_ = weight;
+
+    pt3d_[0] = pt3d.at<double>(0);
+    pt3d_[1] = pt3d.at<double>(1);
+    pt3d_[2] = pt3d.at<double>(2);
+
+    for(int i = 0; i < 5; i++)
+      cam_intr_[i] = cam_intr.at<double>(i);    // 5 params - fx fy cx cy b
+  }
+
+  template <typename T>
+  bool operator()(const T* const cam_trans, const T* const cam_rot, T* out_residuals) const
+  {
+    T pt3d0[3];
+    pt3d0[0] = T(pt3d_[0]);
+    pt3d0[1] = T(pt3d_[1]);
+    pt3d0[2] = T(pt3d_[2]);
+    T pt3d1[3];
+    Transform3DPoint(cam_trans, cam_rot, pt3d0, pt3d1);
+    ComputeStereoResiduals(pt3d1, weight_, cam_intr_, left_pt_, right_pt_, out_residuals);
+    return true;
+  }
+
+  template <typename T>
+  bool operator()(const T* const cam_trans1, const T* const cam_rot1,
+                  const T* const cam_trans2, const T* const cam_rot2, T* out_residuals) const
+  {
+    T pt3d0[3];
+    pt3d0[0] = T(pt3d_[0]);
+    pt3d0[1] = T(pt3d_[1]);
+    pt3d0[2] = T(pt3d_[2]);
+    T pt3d1[3];
+    Transform3DPoint(cam_trans1, cam_rot1, pt3d0, pt3d1);
+    T pt3d2[3];
+    Transform3DPoint(cam_trans2, cam_rot2, pt3d1, pt3d2);
+    ComputeStereoResiduals(pt3d2, weight_, cam_intr_, left_pt_, right_pt_, out_residuals);
+    return true;
+  }
+
+  template <typename T>
+  bool operator()(const T* const cam_trans1, const T* const cam_rot1,
+                  const T* const cam_trans2, const T* const cam_rot2,
+                  const T* const cam_trans3, const T* const cam_rot3, T* out_residuals) const
+  {
+    T pt3d0[3];
+    pt3d0[0] = T(pt3d_[0]);
+    pt3d0[1] = T(pt3d_[1]);
+    pt3d0[2] = T(pt3d_[2]);
+    T pt3d1[3];
+    Transform3DPoint(cam_trans1, cam_rot1, pt3d0, pt3d1);
+    T pt3d2[3];
+    Transform3DPoint(cam_trans2, cam_rot2, pt3d1, pt3d2);
+    T pt3d3[3];
+    Transform3DPoint(cam_trans3, cam_rot3, pt3d2, pt3d3);
+    ComputeStereoResiduals(pt3d3, weight_, cam_intr_, left_pt_, right_pt_, out_residuals);
+    return true;
+  }
+
+  double left_pt_[2];      // The left 2D observation
+  double right_pt_[2];     // The right 2D observation
+  double pt3d_[3];  // The 3D point in world coords (first frame coord system)
+  double cam_intr_[5];      // Instrinsic params are fixed
+  int num_motions_;
+  double weight_;
+};
+
+} // end unnamed namespace
+
+} // end namespace optim
+
+#endif

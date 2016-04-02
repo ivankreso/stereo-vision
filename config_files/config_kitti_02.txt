@@ -1,0 +1,12 @@
+camera_params  = /home/kivan/source/cv-stereo/config_files/camera_params_kitti_00.txt
+source_folder  = /home/kivan/datasets/KITTI/sequences_gray/02/
+imglist        = /home/kivan/source/cv-stereo/config_files/kitti_02_lst.xml
+groundtruth    = /home/kivan/source/cv-stereo/data/GT/KITTI/poses/02.txt
+deformation_field   = /home/kivan/Dropbox/experiment_data/00_deformation_field_matrix.yml
+
+left_folder    = /home/kivan/datasets/KITTI/sequences_gray/02/image_0/
+right_folder    = /home/kivan/datasets/KITTI/sequences_gray/02/image_1/
+start_num      = 0
+end_num        = 4660
+num_width      = 6
+dataset_name   = 02

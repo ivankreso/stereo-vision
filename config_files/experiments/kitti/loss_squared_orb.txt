@@ -1,0 +1,13 @@
+egomotion_method      = EgomotionRansac
+ransac_iters          = 1000
+ransac_threshold      = 1.5
+loss_function_type    = Squared
+use_weighting         = false
+use_deformation_field = false
+
+tracker         = StereoTrackerORB
+max_features    = 5000
+
+use_bundle_adjustment   = false
+bundle_adjuster         = BundleAdjuster
+ba_num_frames           = 6

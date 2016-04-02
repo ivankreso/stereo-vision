@@ -1,0 +1,8 @@
+Detector:
+harris_block_sz   = 3             [3, 5]
+harris_filter_sz  = 1             [1, 3]
+harris_k          = 0.04          [0,04, 0.06]
+harris_thr        = 0.00000001    [0.00000001 -  0.0000001]
+harris_margin     = 15            [same as descriptor size]
+
+

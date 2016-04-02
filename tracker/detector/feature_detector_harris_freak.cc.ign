@@ -1,0 +1,44 @@
+#include "feature_detector_harris_freak.h"
+
+#include "../../core/math_helper.h"
+#include "../base/helper_opencv.h"
+
+namespace {
+
+struct greaterThanPtr : public std::binary_function<const float*, const float*, bool>
+{
+    bool operator () (const float* a, const float* b) const
+    { return *a > *b; }
+};
+
+}
+
+namespace track {
+
+FeatureDetectorHarrisFREAK::FeatureDetectorHarrisFREAK(FeatureDetectorHarrisCV* detector,
+                                                       cv::FREAK* extractor) :
+                                                       detector_(detector), extractor_(extractor)
+{
+}
+
+FeatureDetectorHarrisFREAK::~FeatureDetectorHarrisFREAK()
+{
+  delete detector_;
+  delete extractor_;
+}
+
+void FeatureDetectorHarrisFREAK::detect(const cv::Mat& img, std::vector<cv::KeyPoint>& features,
+                                        cv::Mat& descriptors)
+{
+  detector_->detect(img, features);
+  extractor_->compute(img, features, descriptors);
+}
+
+
+double FeatureDetectorHarrisFREAK::compare(cv::Mat desc1, cv::Mat desc2)
+{
+  uint64_t dist = core::MathHelper::hammDist(desc1, desc2);
+  return (double)dist;
+}
+
+}
