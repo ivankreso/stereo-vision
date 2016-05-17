@@ -1,5 +1,5 @@
 # Stereo Structure and Motion (SaM) library:
-=============
+
 ## Egomotion
 * Implemented using Ceres Solver, two basic variants with Quaternions and Euler angles
 * Examples in `stereo_egomotion/main`
