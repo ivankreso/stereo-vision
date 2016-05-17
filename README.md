@@ -1,5 +1,14 @@
-Stereo Structure and Motion (SaM) library:
+# Stereo Structure and Motion (SaM) library:
 =============
-* Egomotion
-* Dense stereo
+## Egomotion
+* Implemented using Ceres Solver, two basic variants with Quaternions and Euler angles
+* Examples in `stereo_egomotion/main`
+
+## Dense stereo
+* Implementation of Semi-global matching in `reconstruction/base`
+* Examples in `reconstruction/main`
+
+## Feature tracking
+* Monocular and steresopic variants.
+* Implementation in `tracker` directory
 
