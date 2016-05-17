@@ -1,4 +1,4 @@
-# Stereo Structure and Motion (SaM) library:
+# Stereo Structure and Motion (SaM / SfM) library
 
 ## Egomotion
 * Implemented using Ceres Solver, two basic variants with Quaternions and Euler angles
