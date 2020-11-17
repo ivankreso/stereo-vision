@@ -44,7 +44,7 @@ vector<float> disparityErrorsOutlier (DisparityImage &D_gt,DisparityImage &D_ori
         float d_err  = fabs(D_gt.getDisp(u,v)-D_ipol.getDisp(u,v));
         for (int32_t i=0; i<5; i++)
           if (d_err>(float)(i+1))
-            errors[i*2+0]++;
+            errors[i*2]++;
         num_pixels++;
         if (D_orig.isValid(u,v)) {
           for (int32_t i=0; i<5; i++)
